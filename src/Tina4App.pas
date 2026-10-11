@@ -651,6 +651,7 @@ type
     procedure Move(X, Y: Single);
     procedure Drag(X, Y: Single);
     procedure Scroll(X, Y, DX, DY: Single);
+    procedure Key(const Chars: string; KeyCode: Integer);
     procedure Tick;
   end;
 
@@ -685,6 +686,22 @@ end;
 procedure TAppDriver.Move(X, Y: Single); begin TinaHover(X, Y); if TinaTakeMoveRepaint then Shell.Invalidate; end;
 procedure TAppDriver.Drag(X, Y: Single); begin TinaTouch(2, X, Y); Shell.Invalidate; end;
 procedure TAppDriver.Scroll(X, Y, DX, DY: Single); begin TinaScrollBy(X, Y, DX, DY); Shell.Invalidate; end;
+{ Keyboard: the shell delivers either a printable string (KeyCode = TK_NONE) or a
+  special key. Route it into the focused control the way WM_CHAR does on Windows. }
+procedure TAppDriver.Key(const Chars: string; KeyCode: Integer);
+var i: Integer;
+begin
+  case KeyCode of
+    TK_RETURN:    TinaKey(10);
+    TK_BACKSPACE, TK_DELETE: TinaKey(8);
+    TK_TAB:       TinaFocusNext;
+    TK_ESCAPE:    TinaBlurInput;
+    TK_LEFT, TK_RIGHT, TK_UP, TK_DOWN: { no caret movement in the engine } ;
+  else
+    for i := 1 to Length(Chars) do TinaKey(Ord(Chars[i]));
+  end;
+  if Shell <> nil then Shell.Invalidate;
+end;
 procedure TAppDriver.Tick;
 var nowMs: QWord; thresh: Integer;
 begin
@@ -726,6 +743,7 @@ begin
   GShell.OnMouseMove := @GDriver.Move;
   GShell.OnMouseDrag := @GDriver.Drag;
   GShell.OnScroll := @GDriver.Scroll;
+  GShell.OnKeyDown := @GDriver.Key;        // keyboard input into focused controls
   GShell.OnTick := @GDriver.Tick;
   GShell.Initialize(aw, ah, Title);
   if IconPath <> '' then GShell.SetAppIcon(IconPath);   // Dock / app-switcher icon
