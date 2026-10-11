@@ -411,18 +411,18 @@ See `src/Tina4ShellWin.pas` (canvas) and `examples/htmlviewer/htmlviewer_win.pas
 ```
 Frond (templates)  ─▶  Tina4HTMLDom + Tina4HTMLLayout (render)  ─▶  platform shell (native window)
       ▲                                                                        │
-      └──────  data layer: REST · SSE · WebSockets  ◀── events (click/submit) ─┘
+      └──────  data layer: HTTP · SSE · WebSockets  ◀── events (click/submit) ─┘
 ```
 
 One HTML-driven model, six targets from one machine (macOS, Windows or Linux).
-Each layer has a design doc:
+Each layer:
 
 | Layer | Status | Doc |
 |---|---|---|
 | Renderer (DOM/CSS/layout) | rendering on macOS, Windows (130/130 reftests) and Linux; systematic conformance push | [CONFORMANCE.md](docs/CONFORMANCE.md), [CSS-PROPERTY-INDEX.md](docs/CSS-PROPERTY-INDEX.md), [HTML-ELEMENT-INDEX.md](docs/HTML-ELEMENT-INDEX.md) |
 | Platform shells | macOS + iOS (Objective-Pascal), Windows (GDI+), Linux (Xlib) and Android (JNI → Canvas) all render; desktop shells share offscreen filter/blend/mask/3D compositing. Android APKs build **natively from Windows** | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
-| Data layer (WS/SSE/API) | designed, ports of tina4delphi units | [ROADMAP-DATALAYER.md](docs/ROADMAP-DATALAYER.md) |
-| Frond template engine | designed, port of Tina4Frond.pas | [ROADMAP-FROND.md](docs/ROADMAP-FROND.md) |
+| Data layer (HTTP/SSE/WebSockets) | **shipped.** Async HTTP (`Tina4Http` core + per-platform backends: fphttpclient+OpenSSL on desktop, NSURLSession on Apple, HttpURLConnection on Android), an SSE client (`Tina4SSE`; plaintext today, TLS a follow-up), a WebSocket client (`Tina4WebSocket`), and `Tina4Live` — a declarative `sse.connect`/`ws.connect` reactive surface that routes messages to the DOM with no Pascal glue. Callbacks fire on the UI thread, so handlers mutate the DOM safely. | [ROADMAP-DATALAYER.md](docs/ROADMAP-DATALAYER.md) |
+| Frond template engine | **shipped.** `Tina4Frond` — a zero-dependency, Twig-compatible engine over an `fpjson` context: output + dotted paths, filters, `if`/`for`/`set`, `include`, `extends`/`block`, whitespace control, auto-escaping, expressions, and `AddFilter`/`AddGlobal`. | [ROADMAP-FROND.md](docs/ROADMAP-FROND.md) |
 
 ## Conformance harness
 
@@ -544,10 +544,10 @@ server, and signed Windows + FPC→Android cross-pack artifacts.
    flexbox, positioning, list markers and table spans.
 2. **Linux shell parity**: images + the filter/blend/mask/3D compositor (the
    desktop-class pieces the X11 shell doesn't share yet).
-3. **Data layer**: dispatcher → DOM-mutation API → REST → SSE → WebSockets
-   (ports of the Tina4Delphi units) — live, data-aware native apps.
-4. **Frond**: port the template engine — templates + data → HTML.
-5. Keep the agent skills current so AI coders drive the stack without
+3. **Data layer**: now shipped (HTTP/SSE/WebSockets + `Tina4Live`) — next is
+   TLS for the SSE client and a native folder/file picker on the Windows and
+   Linux shells (macOS already has `NSOpenPanel`).
+4. Keep the agent skills current so AI coders drive the stack without
    rediscovering the pitfalls.
 
 ## AI coder skill
@@ -570,7 +570,8 @@ setup for Claude Code, Cursor, Windsurf, VS Code, Zed, Codex and more.
 
 Moving fast. **macOS, Windows, Linux and Android render natively today** (see the
 comparison and the size table); iOS runs on-device. Android APKs build from a
-Windows host with no Mac and no WSL. Next: the data layer (REST/SSE/WebSockets)
-and the Frond template engine.
+Windows host with no Mac and no WSL. The data layer (HTTP/SSE/WebSockets +
+`Tina4Live`) and the Frond template engine are shipped; next is SSE-over-TLS and
+a native folder/file picker on the Windows and Linux shells.
 
 MIT licensed, part of the [Tina4 stack](https://tina4.com).
