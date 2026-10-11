@@ -135,6 +135,8 @@ type
     procedure Run; override;
     procedure Quit; override;
     procedure SetTitle(const Title: string); override;
+    { Set the Dock / app-switcher icon from a PNG (no-op if the file is missing). }
+    procedure SetAppIcon(const Path: string);
     procedure SetCursor(C: TTina4Cursor); override;
     procedure Notify(const Title, Body, Tag: string); override;
     function FetchToFile(const Url, DestPath: string): Boolean; override;
@@ -1605,6 +1607,18 @@ end;
 procedure TCocoaShell.SetTitle(const Title: string);
 begin
   if FWindow <> nil then FWindow.setTitle(NSStr(Title));
+end;
+
+procedure TCocoaShell.SetAppIcon(const Path: string);
+var img: NSImage;
+begin
+  if (Path = '') or (not FileExists(Path)) then Exit;
+  img := NSImage(NSImage.alloc).initWithContentsOfFile(NSStr(Path));
+  if img <> nil then
+  begin
+    NSApplication.sharedApplication.setApplicationIconImage(img);
+    img.release;
+  end;
 end;
 
 procedure TCocoaShell.SetCursor(C: TTina4Cursor);

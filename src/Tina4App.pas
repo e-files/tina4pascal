@@ -728,6 +728,7 @@ begin
   GShell.OnScroll := @GDriver.Scroll;
   GShell.OnTick := @GDriver.Tick;
   GShell.Initialize(aw, ah, Title);
+  if IconPath <> '' then GShell.SetAppIcon(IconPath);   // Dock / app-switcher icon
   if (snap <> '') or (dk <> '') or (GScript <> '') then
   begin
     if GScript <> '' then RunScript(GScript, @MacRenderFrame, @MacSaveFrame)
