@@ -7969,6 +7969,8 @@ begin
         cy := y + (Box.H - st.FontSize) / 2;
       if st.CaretColor <> 0 then
         Canvas.FillRect(cx, cy, 1.5, st.FontSize + 2, st.CaretColor)   // caret-color
+      else if st.Color <> 0 then
+        Canvas.FillRect(cx, cy, 1.5, st.FontSize + 2, st.Color)        // caret-color:auto → text colour
       else
         Canvas.FillRect(cx, cy, 1.5, st.FontSize + 2, $FF1F2937);
     end;
