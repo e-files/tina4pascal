@@ -9,9 +9,11 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.view.View;
+import android.view.WindowInsets;
 import android.widget.FrameLayout;
 import android.provider.MediaStore;
 import android.provider.OpenableColumns;
+import android.util.Log;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
@@ -23,6 +25,8 @@ import java.io.InputStream;
 
 /** Loads assets/controls.html and hands it to the native renderer. */
 public class MainActivity extends Activity {
+
+    private static MainActivity instance;
 
     private static final int REQ_PICK_FILE = 42;
     private static final int REQ_CAPTURE   = 43;
@@ -38,6 +42,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        instance = this;
         Tina4Share.init(this);
         Tina4Location.init(this);
         // local notifications: hold the app context + channel; ask permission on 33+
@@ -47,13 +52,22 @@ public class MainActivity extends Activity {
                 != android.content.pm.PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"}, 4712);
         }
-        // No ActionBar (theme) — the engine draws edge-to-edge like iOS. Paint
-        // the status bar in the page background with dark icons so it blends in;
-        // the window still lays the view out below the status bar (no overlap).
+        // No ActionBar (theme). Keep the system bars visually edge-to-edge, but
+        // place the engine view inside their safe rectangle. Android 15/16
+        // enforces edge-to-edge for current target SDKs, so relying on the old
+        // decor-fit behavior lets a fixed footer slide under the nav bar.
         getWindow().setStatusBarColor(0xFFFBFAF7);
+        getWindow().setNavigationBarColor(0xFFFFFDF7);
+        if (Build.VERSION.SDK_INT >= 29) {
+            getWindow().setNavigationBarContrastEnforced(false);
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             getWindow().getDecorView().setSystemUiVisibility(
-                View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
+                View.SYSTEM_UI_FLAG_LAYOUT_STABLE |
+                View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN |
+                View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION |
+                View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR |
+                View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
         }
         view = new Tina4View(this);
         Tina4Location.setView(view);
@@ -61,14 +75,55 @@ public class MainActivity extends Activity {
         // Host the engine view in a FrameLayout so native <video> players can be
         // overlaid as sibling views positioned over their poster boxes.
         FrameLayout root = new FrameLayout(this);
-        root.addView(view, new FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+        FrameLayout.LayoutParams safeLp = new FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT);
+        root.addView(view, safeLp);
+        root.setOnApplyWindowInsetsListener((v, insets) -> {
+            int left = 0, top = 0, right = 0, bottom = 0;
+            if (Build.VERSION.SDK_INT >= 30) {
+                android.graphics.Insets bars = insets.getInsets(
+                    WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
+                left = bars.left; top = bars.top; right = bars.right; bottom = bars.bottom;
+            } else {
+                left = insets.getSystemWindowInsetLeft();
+                top = insets.getSystemWindowInsetTop();
+                right = insets.getSystemWindowInsetRight();
+                bottom = insets.getSystemWindowInsetBottom();
+            }
+            FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) view.getLayoutParams();
+            if (lp.leftMargin != left || lp.topMargin != top ||
+                lp.rightMargin != right || lp.bottomMargin != bottom) {
+                lp.leftMargin = left; lp.topMargin = top;
+                lp.rightMargin = right; lp.bottomMargin = bottom;
+                view.setLayoutParams(lp);
+            }
+            return insets;
+        });
         setContentView(root);
+        root.requestApplyInsets();
         ImageLoader.init(getCacheDir(), view);   // async remote <img> cache + repaint
         extractAssets();                          // unpack APK assets → filesDir/assets/
         view.setAssetBase(getFilesDir().getAbsolutePath());  // relative <img src> base
         // "@demo" = built-in interactive demo; an asset name renders that page.
         view.setHtml(loadAsset("showcase.html"));
+    }
+
+    /** Open an external URL from the Tina4Pascal HTML link handler. */
+    public static void openExternalUrl(final String url) {
+        Log.i("Tina4Link", "openExternalUrl(" + url + ")");
+        final MainActivity activity = instance;
+        if (activity == null || url == null || url.isEmpty()) {
+            Log.e("Tina4Link", "Cannot open URL: activity or URL is missing");
+            return;
+        }
+        activity.runOnUiThread(() -> {
+            try {
+                Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+                activity.startActivity(intent);
+            } catch (Exception error) {
+                Log.e("Tina4Link", "No Android handler for " + url, error);
+            }
+        });
     }
 
     /** Copy bundled APK assets (icons, images, fonts/) to filesDir/assets/ so the

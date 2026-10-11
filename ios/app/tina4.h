@@ -18,8 +18,10 @@ int  tina4_anim_region(float *x, float *y, float *w, float *h);          // 1 + 
 int  tina4_anim_active(void);                       // 1 if the last frame has live animation
 
 void tina4_frame(void *cgcontext, int w, int h, float density);
+void tina4_set_safe_area(float top, float right, float bottom, float left);
 void tina4_sheep_frame(void *cgcontext, int w, int h, float density);  // ThreePascal demo: walking ram
 int  tina4_touch(int action, float x, float y);   // action 0=down 1=up 2=move
+int  tina4_open_link_at(float x, float y);        // 1 if an external anchor opened
 int  tina4_tick(void);
 int  tina4_http_pending(void);                     // in-flight HTTP requests
 int  tina4_ios_images_pending(void);               // in-flight <img> downloads (ImageLoader.m)

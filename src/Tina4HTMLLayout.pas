@@ -198,7 +198,7 @@ const
   PAINT_CULL_MARGIN = 200;   // CSS-px slack around the viewport for the full-frame cull
 
 procedure PaintBox(Canvas: TTina4Canvas; Box: TLayoutBox; OffsetY: Single);
-function HitTest(Box: TLayoutBox; X, Y: Single): THTMLTag;
+function HitTest(Box: TLayoutBox; X, Y: Single; ScrollOffsetY: Single = 0): THTMLTag;
 { Deepest overflow-scrollable box containing the point (doc coords). }
 function FindScrollBox(Box: TLayoutBox; X, Y: Single): TLayoutBox;
 { Box whose Tag = T (first match). }
@@ -7981,7 +7981,7 @@ begin
   end;
 end;
 
-function HitTest(Box: TLayoutBox; X, Y: Single): THTMLTag;
+function HitTest(Box: TLayoutBox; X, Y: Single; ScrollOffsetY: Single): THTMLTag;
 var
   i: Integer;
   r: THTMLTag;
@@ -7989,6 +7989,14 @@ var
   childY: Single;
 begin
   Result := nil;
+  if Box = nil then Exit;
+  // Fixed descendants are painted in viewport coordinates. Drop the document
+  // scroll offset at the same boundary when hit-testing them.
+  if SameText(Box.Style.CSSPosition, 'fixed') then
+  begin
+    Y := Y - ScrollOffsetY;
+    ScrollOffsetY := 0;
+  end;
   // pointer-events:none — the box and its subtree are transparent to hit-testing
   // (clicks pass through to whatever is behind).
   if (Box.Tag <> nil) and Box.Style.PointerEventsNone then Exit;
@@ -7997,10 +8005,14 @@ begin
   // a clipped scroller swallows anything outside its rect
   if Box.Scrollable and not inside then Exit;
   childY := Y;
-  if Box.Scrollable then childY := Y + Box.ScrollTop;
+  if Box.Scrollable then
+  begin
+    childY := Y + Box.ScrollTop;
+    ScrollOffsetY := ScrollOffsetY + Box.ScrollTop;
+  end;
   for i := Box.Children.Count - 1 downto 0 do
   begin
-    r := HitTest(Box.Children[i], X, childY);
+    r := HitTest(Box.Children[i], X, childY, ScrollOffsetY);
     if r <> nil then Exit(r);
   end;
   if inside and (Box.Tag <> nil) then Result := Box.Tag;

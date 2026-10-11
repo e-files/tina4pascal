@@ -669,11 +669,18 @@ proj_android_build() {
   # bundle the project's fonts/ at assets/fonts/ so the shell can register them
   # on-device (extracted under filesDir/assets); see docs/BUNDLED-FONTS.md.
   [ -d "$PWD/fonts" ] && { mkdir -p "$APPDIR/assets/fonts"; cp "$PWD/fonts/"*.ttf "$APPDIR/assets/fonts/" 2>/dev/null; } || true
-  # launcher icon: the project's own assets/icon.png, else the tina4 brand icon
-  # (same fallback the macOS .app uses) so every example is branded, not generic.
-  aicon="$PWD/assets/icon.png"; [ -f "$aicon" ] || aicon="$ROOT/branding/icon.png"
-  [ -f "$aicon" ] && find "$APPDIR/res" -name 'ic_launcher*.png' \
-    -exec cp "$aicon" {} \; 2>/dev/null || true
+  # launcher icon. A project may provide COMPLETE Android launcher resources
+  # (adaptive-icon XML + foreground/background layers) — overlay those as-is, never
+  # flatten them into the opaque fallback (Android would white-mask the artwork).
+  # Else use the project's assets/icon.png, else the tina4 brand icon (the same
+  # fallback the macOS .app uses) so every example is branded, not generic.
+  if [ -d "$PWD/android/res" ]; then
+    cp -R "$PWD/android/res/." "$APPDIR/res/" 2>/dev/null || true
+  else
+    aicon="$PWD/assets/icon.png"; [ -f "$aicon" ] || aicon="$ROOT/branding/icon.png"
+    [ -f "$aicon" ] && find "$APPDIR/res" -name 'ic_launcher*.png' \
+      -exec cp "$aicon" {} \; 2>/dev/null || true
+  fi
 
   # project app-units (tina4.json "appUnits") → the staged app_units.inc, spliced
   # into tina4jni.pas's uses; their source dirs join the FPC path. Each unit's
@@ -692,6 +699,10 @@ proj_android_build() {
 
   # 3. native lib(s) — compile the JNI bridge against the REPO engine (src) plus
   #    the shared 3d units (ThreePascal) and the project's own app-units.
+  # FPC emits GNU tool names while modern Android NDKs provide LLVM tools;
+  # use the installed wrapper bin directory just like android/build.sh does.
+  FPC_CROSS_BIN="${FPC_CROSS_BIN:-$FPC_HOME/cross/bin/aarch64-android}"
+  export PATH="$FPC_CROSS_BIN:$FPC_HOME/bin:$PATH"
   for abi in ${ABIS:-arm64-v8a}; do
     case "$abi" in
       arm64-v8a)   af="-Tandroid -Paarch64" ;;
@@ -931,6 +942,8 @@ PYEOF
   if [ -f "$ihost/app/Info.plist" ]; then
     /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName $iname" "$ihost/app/Info.plist" 2>/dev/null || true
     /usr/libexec/PlistBuddy -c "Set :CFBundleName $iname" "$ihost/app/Info.plist" 2>/dev/null || true
+    /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $ivname" "$ihost/app/Info.plist" 2>/dev/null || true
+    /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $ivcode" "$ihost/app/Info.plist" 2>/dev/null || true
   fi
   ( cd "$ihost" && xcodegen >/dev/null ) || die "xcodegen failed"
 }
@@ -1589,6 +1602,18 @@ proj_android_deploy() {
   ok "installed + launched $bundle on device"
 }
 
+# Resolve the package belonging to the current project. The generated Android
+# activity remains in com.tina4.pascal, but the manifest/application id is the
+# project's bundleId and is what adb uses to install, launch, and capture it.
+android_project_package() {
+  if is_project 2>/dev/null; then
+    _aname="$(jget name "$(basename "$PWD")")"
+    jget bundleId "com.tina4.$_aname"
+  else
+    printf '%s' "$ANDROID_PKG"
+  fi
+}
+
 proj_ios_deploy() {
   # iOS is DEVICE-ONLY: FPC 3.2.2 builds one iOS slice (aarch64-ios, physical
   # iPhone). There is NO Simulator build — the engine lib is device-arm64 and a
@@ -1604,7 +1629,8 @@ proj_ios_deploy() {
     | grep -qE "BUILD SUCCEEDED" || die "build/sign failed (set your team in App Store Connect)"
   # `xcodebuild build` defaults to Debug; do not accidentally pick up a stale
   # unsigned Release app left by the separate link-check build.
-  app="$(find "$iwork/dd/Build/Products" -maxdepth 2 -name '*.app' -path '*Debug-iphoneos*' | head -1)"
+  app="$iwork/dd/Build/Products/Debug-iphoneos/Tina4Pascal.app"
+  [ -d "$app" ] || die "signed iOS app not found at expected path: $app"
   say "→ installing on ${udid}..."
   xcrun devicectl device install app --device "$udid" "$app" >/dev/null 2>&1 \
     || die "install failed (iPhone unlocked?)"
@@ -1688,9 +1714,10 @@ cmd_deploy() {
   command -v adb >/dev/null 2>&1 || die "adb not found"
   [ "$(adb devices | grep -cw device)" -gt 0 ] || die "no device attached (adb devices)"
   cmd_apk
+  _abundle="$(android_project_package)"
   say "→ installing…"
   adb install -r "$ROOT/android/tina4pascal-debug.apk"
-  adb shell am start -n com.tina4.pascal/.MainActivity
+  adb shell am start -n "$_abundle/com.tina4.pascal.MainActivity"
   ok "launched on device"
 }
 
@@ -1700,7 +1727,14 @@ cmd_deploy() {
 # the first available iPhone/iPad; fall back to a USB idevice_id UDID.
 ios_udid() {
   [ -n "${IOS_UDID:-}" ] && { echo "$IOS_UDID"; return; }
-  id="$(xcrun devicectl list devices 2>/dev/null \
+  devices="$(xcrun devicectl list devices 2>/dev/null || true)"
+  # Prefer a connected physical device. A connected simulator can otherwise
+  # win by row order and receive the deploy while the attached phone is left
+  # unchanged.
+  id="$(printf '%s\n' "$devices" \
+        | grep -iE 'connected' | grep -iE 'physical' | grep -iE 'iphone|ipad' \
+        | grep -oE '[0-9A-Fa-f]{8}-([0-9A-Fa-f]{4}-){3}[0-9A-Fa-f]{12}' | head -1)"
+  [ -n "$id" ] || id="$(printf '%s\n' "$devices" \
         | grep -iE 'available|connected' | grep -iE 'iphone|ipad' \
         | grep -oE '[0-9A-Fa-f]{8}-([0-9A-Fa-f]{4}-){3}[0-9A-Fa-f]{12}' | head -1)"
   [ -n "$id" ] && { echo "$id"; return; }
@@ -1727,8 +1761,16 @@ cmd_ios() {
   say "→ installing on ${udid}..."
   xcrun devicectl device install app --device "$udid" "$app" >/dev/null 2>&1 \
     || die "install failed (is the iPhone unlocked?)"
-  xcrun devicectl device process launch --device "$udid" "$IOS_BUNDLE" >/dev/null 2>&1 || true
-  ok "launched on device"
+  # Launch the project's bundle, not the reference Tina4Pascal bundle.  The
+  # latter is only the fallback when deploying the engine outside a project.
+  _ibundle="$IOS_BUNDLE"
+  if is_project 2>/dev/null; then
+    _iname="$(jget name "$(basename "$PWD")")"
+    _ibundle="$(jget bundleId "com.tina4.$_iname")"
+  fi
+  xcrun devicectl device process launch --terminate-existing --device "$udid" "$_ibundle" >/dev/null 2>&1 \
+    || die "launch failed (installed? iPhone unlocked?)"
+  ok "launched $_ibundle on device"
 }
 
 # launch <target>  — bring the already-installed app to the foreground, no build.
@@ -1968,14 +2010,18 @@ cmd_screenshot() {
   mkdir -p "$(dirname "$out")"
   case "$plat" in
     ios)
-      # iOS 17+ needs a RemoteXPC tunnel; ensure the no-root native one is up and
-      # grab its RSD addr/port (auto-started, cached, reused). Phone must be
-      # unlocked. pymobiledevice3 EXITS 0 even on failure (e.g. "Device is not
-      # connected") and writes nothing, so gate success on a real, non-empty PNG
-      # — never on the exit code.
+      # Prefer Xcode CoreDevice for paired physical devices; it does not need a
+      # privileged RemoteXPC tunnel. Keep pymobiledevice3 as the fallback.
+      rm -f "$out"
+      udid="$(ios_udid)"
+      if [ -n "$udid" ] && xcrun devicectl device capture screenshot \
+          --device "$udid" --destination "$out" >/dev/null 2>&1 && [ -s "$out" ]; then
+        ok "iOS screenshot → $out"
+        return 0
+      fi
+      rm -f "$out"
       rsd="$(ios_ensure_tunnel)" || die "iOS screenshot needs a developer tunnel — start it with: tina4pascal ios-tunnel"
       set -- $rsd; raddr="$1"; rport="$2"
-      rm -f "$out"
       serr="$("$PMD3" developer dvt screenshot --rsd "$raddr" "$rport" "$out" 2>&1 >/dev/null)" || true
       [ -s "$out" ] || { rm -f "$out"; die "iOS screenshot failed — is the iPhone unlocked? ${serr:-empty output file}"; }
       ok "iOS screenshot → $out" ;;
@@ -1992,8 +2038,9 @@ cmd_screenshot() {
       die "no $plat screenshot from macOS — a Mac can't display a $plat window. The $plat windowed host DOES build ('build $plat' → htmlviewer_win/x11); run + screenshot it ON that OS." ;;
     android|*)
       adb_have_device || die "no device attached (adb devices)"
+      _abundle="$(android_project_package)"
       adb shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1 || true   # slept screen = black
-      adb shell am start -n com.tina4.pascal/.MainActivity >/dev/null 2>&1 || true
+      adb shell am start -n "$_abundle/com.tina4.pascal.MainActivity" >/dev/null 2>&1 || true
       sleep 1
       adb exec-out screencap -p > "$out"
       ok "screenshot → $out" ;;
@@ -2010,14 +2057,15 @@ cmd_logs() {
       # network-paired phone. Filter to the app + its media stack.
       { [ -x "$PMD3" ] || command -v pymobiledevice3 >/dev/null 2>&1; } \
         || die "pymobiledevice3 missing — run: tina4pascal setup ios"
+      _log_mode="${1:-}"
       rsd="$(ios_ensure_tunnel)" || die "iOS logs need a developer tunnel — start it with: tina4pascal ios-tunnel"
       set -- $rsd; raddr="$1"; rport="$2"
       filt='Tina4Pascal|tina4|AVPlayer|CoreMedia|VideoToolbox'
-      case "${1:-}" in
+      case "$_log_mode" in
         -f|--follow) "$PMD3" syslog live --rsd "$raddr" "$rport" 2>/dev/null | grep --line-buffered -iE "$filt" ;;
         *) tmp="$(mktemp)"
            "$PMD3" syslog live --rsd "$raddr" "$rport" 2>/dev/null | grep --line-buffered -iE "$filt" > "$tmp" & p=$!
-           sleep "${1:-5}"; kill "$p" 2>/dev/null || true
+           sleep "${_log_mode:-5}"; kill "$p" 2>/dev/null || true
            tail -"${2:-60}" "$tmp"; rm -f "$tmp" ;;
       esac ;;
     android|*) cmd_logcat "$@" ;;
@@ -2061,11 +2109,12 @@ cmd_debug() {
     android)
       adb_have_device || die "no device attached"
       cmd_apk
+      _abundle="$(android_project_package)"
       adb install -r "$ROOT/android/tina4pascal-debug.apk" >/dev/null
       adb logcat -c || true
-      adb shell am force-stop com.tina4.pascal >/dev/null 2>&1 || true
+      adb shell am force-stop "$_abundle" >/dev/null 2>&1 || true
       adb shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1 || true
-      adb shell am start -n com.tina4.pascal/.MainActivity >/dev/null 2>&1
+      adb shell am start -n "$_abundle/com.tina4.pascal.MainActivity" >/dev/null 2>&1
       sleep 3
       cmd_screenshot android "$ROOT/build/device.png"
       say "${B}--- device log (app pid, or crashes if it died) ---${Z}"

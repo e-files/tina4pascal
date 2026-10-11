@@ -59,6 +59,7 @@ gets an **ADR**. Conventions and templates: [`plan/README.md`](plan/README.md).
 - [ADR-0012](plan/adr/0012-onmousemove-event.md) — `onmousemove` DOM event dispatched to app code
 - [ADR-0013](plan/adr/0013-builtins-dom-node-api.md) — runtime DOM node primitives in Tina4Builtins
 - [ADR-0014](plan/adr/0014-dynamic-node-animation-and-viewport.md) — dynamically-added nodes animate; apps can read the viewport
+- [ADR-0015](plan/adr/0015-ios-safe-area-css-values.md) — native safe-area insets flow through CSS environment values
 
 ### Drift tracker — `plan/drift/`
 - [framework-gaps](plan/drift/framework-gaps.md) — standing table of claim-vs-code gaps; read before promising a capability ([how to maintain](plan/drift/README.md))
@@ -73,6 +74,8 @@ gets an **ADR**. Conventions and templates: [`plan/README.md`](plan/README.md).
 - [mobile-scroll-render-optimizations](plan/mobile-scroll-render-optimizations.md)
 - [svg-close-path-strokes](plan/svg-close-path-strokes.md) — preserve the closing edge in stroked SVG paths
 - [readme-mobile-emulators](plan/readme-mobile-emulators.md)
+- [fixed-hit-testing-after-scroll](plan/fixed-hit-testing-after-scroll.md) — restore fixed-control taps after document scrolling
+- [ios-safe-area-env-and-footer](plan/ios-safe-area-env-and-footer.md) — expose iOS insets for safe fixed footers
 
 ## Skills
 

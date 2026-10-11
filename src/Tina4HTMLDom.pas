@@ -507,6 +507,9 @@ type
 { Reset the deferred-calc table and set the viewport (px) for vw/vh in calc().
   The layout engine calls this before each build. }
 procedure SetCalcContext(VpW, VpH: Single);
+{ Set platform safe-area insets used by env(safe-area-inset-*).  Desktop and
+  shells without an inset call this with zeros. }
+procedure SetSafeAreaInsets(Top, Right, Bottom, Left: Single);
 { Resolve a ParseLength result: if it was a deferred %-bearing calc() marker,
   evaluate it now against PctBase; otherwise return V unchanged. }
 function ResolveCalc(V, PctBase: Single): Single;
@@ -2903,6 +2906,10 @@ end;
 var
   GCalcVpW: Single = 0;     // viewport width  (px) for vw/vmin/vmax in calc
   GCalcVpH: Single = 0;     // viewport height (px) for vh/vmin/vmax in calc
+  GSafeTop: Single = 0;
+  GSafeRight: Single = 0;
+  GSafeBottom: Single = 0;
+  GSafeLeft: Single = 0;
   GCalcExprs: array of string;   // deferred %-bearing exprs, keyed by the marker
                                  // returned from ParseLength ("<emSize>|<expr>")
 
@@ -2915,6 +2922,11 @@ procedure SetCalcContext(VpW, VpH: Single);
 begin
   GCalcVpW := VpW; GCalcVpH := VpH;
   SetLength(GCalcExprs, 0);
+end;
+
+procedure SetSafeAreaInsets(Top, Right, Bottom, Left: Single);
+begin
+  GSafeTop := Top; GSafeRight := Right; GSafeBottom := Bottom; GSafeLeft := Left;
 end;
 
 { Evaluate a calc/min/max/clamp expression to px. `+ - * /` with the usual
@@ -2948,7 +2960,7 @@ var P: Integer; S: string;
   end;
 
   function ParseFactor: Single;
-  var st, num, u: Integer; fn: string; args: array of Single; na: Integer;
+  var st, num, u, envStart: Integer; fn, envName: string; args: array of Single; na: Integer;
   begin
     Skip;
     Result := 0;
@@ -2966,7 +2978,14 @@ var P: Integer; S: string;
       Skip;
       if (P <= Length(S)) and (S[P] = '(') then
       begin
-        Inc(P); na := 0;
+        Inc(P); na := 0; envName := '';
+        if fn = 'env' then
+        begin
+          Skip; envStart := P;
+          while (P <= Length(S)) and (S[P] in ['a'..'z', '0'..'9', '-', '_']) do Inc(P);
+          envName := Copy(S, envStart, P - envStart);
+          if (P <= Length(S)) and (S[P] = ',') then Inc(P);
+        end;
         repeat
           SetLength(args, na + 1); args[na] := ParseE; Inc(na); Skip;
           if (P <= Length(S)) and (S[P] = ',') then begin Inc(P); Continue; end;
@@ -2981,9 +3000,12 @@ var P: Integer; S: string;
           Result := Min(Max(args[0], args[1]), args[2])
         else if fn = 'env' then
         begin
-          // env(<name>, <fallback>): safe-area insets etc. are 0 on desktop, so
-          // the named value is unavailable and the fallback (2nd arg) wins.
-          if na >= 2 then Result := args[1] else Result := 0;
+          if envName = 'safe-area-inset-top' then Result := GSafeTop
+          else if envName = 'safe-area-inset-right' then Result := GSafeRight
+          else if envName = 'safe-area-inset-bottom' then Result := GSafeBottom
+          else if envName = 'safe-area-inset-left' then Result := GSafeLeft
+          else if na >= 1 then Result := args[0]
+          else Result := 0;
         end
         else if na > 0 then Result := args[0];
         Exit;

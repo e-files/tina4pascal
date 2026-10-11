@@ -48,15 +48,51 @@
 @property (strong, nonatomic) AVAudioPlayer *audioPlayer;
 @property (strong, nonatomic) NSString *audioSrc;          // src currently loaded (for resume)
 @property (strong, nonatomic) CADisplayLink *audioTick;    // progress pump while playing
+@property (strong, nonatomic) UITapGestureRecognizer *canvasTap;
 @end
 
 @implementation Tina4View
+
+// The HTML renderer is the primary interactive surface. Native media views
+// are the only subviews that should consume touches; stale/transparent helper
+// subviews must not create dead regions over the canvas.
+- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
+    UIView *hit = [super hitTest:point withEvent:event];
+    if (hit == self) return self;
+    if ((self.scanView && (hit == self.scanView || [hit isDescendantOfView:self.scanView])) ||
+        (self.camView && (hit == self.camView || [hit isDescendantOfView:self.camView])))
+        return hit;
+    for (NSString *src in self.videoControllers) {
+        UIView *video = self.videoControllers[src].view;
+        if (hit == video || [hit isDescendantOfView:video]) return hit;
+    }
+    return self;
+}
+
+void tina4_ios_open_url(const char *url) {
+    if (url == NULL || url[0] == '\0') return;
+    NSString *value = [NSString stringWithUTF8String:url];
+    if (value.length == 0) return;
+    NSURL *target = [NSURL URLWithString:value];
+    if (!target) return;
+    NSLog(@"[Tina4Link] request %@", value);
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [[UIApplication sharedApplication] openURL:target
+                                           options:@{}
+                                 completionHandler:^(BOOL opened) {
+            NSLog(@"[Tina4Link] %@ %@", opened ? @"opened" : @"rejected", value);
+        }];
+    });
+}
 
 - (instancetype)initWithFrame:(CGRect)frame {
     if ((self = [super initWithFrame:frame])) {
         self.contentMode = UIViewContentModeRedraw;   // redraw on resize/rotate
         self.multipleTouchEnabled = NO;
         self.clipsToBounds = YES;                      // keep video views inside the view
+        self.canvasTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(canvasTapRecognized:)];
+        self.canvasTap.cancelsTouchesInView = YES;
+        [self addGestureRecognizer:self.canvasTap];
         _videoControllers = [NSMutableDictionary dictionary];
         _videoLoopObservers = [NSMutableDictionary dictionary];
         _videoFlags = [NSMutableDictionary dictionary];
@@ -77,6 +113,22 @@
         // (sheep demo display-link disabled — rendering the HTML shadow test instead)
     }
     return self;
+}
+
+- (void)canvasTapRecognized:(UITapGestureRecognizer *)gesture {
+    if (gesture.state != UIGestureRecognizerStateRecognized) return;
+    CGPoint p = [gesture locationInView:self];
+    UIEdgeInsets s = self.safeAreaInsets;
+    int opened = tina4_open_link_at(p.x - s.left, p.y - s.top);
+    NSLog(@"[Tina4Link] gesture hit-test x=%.1f y=%.1f opened=%d", p.x - s.left, p.y - s.top, opened);
+    if (opened) {
+        [self setNeedsDisplay];
+        return;
+    }
+    int r = tina4_touch(1, p.x - s.left, p.y - s.top);
+    NSLog(@"[Tina4Touch] gesture tap x=%.1f y=%.1f result=%d", p.x - s.left, p.y - s.top, r);
+    [self setNeedsDisplay];
+    if (r != TINA_SHOW_KBD && tina4_focus_kind() == 0) [self hideKeyboard];
 }
 
 - (void)tina4LocationReady:(NSNotification *)note {
@@ -107,6 +159,7 @@
     // shift the engine's origin into the safe area and hand it the inset size.
     // (Touches are un-inset by the same amount in -send:touches:.)
     UIEdgeInsets s = self.safeAreaInsets;
+    tina4_set_safe_area(s.top, s.right, s.bottom, s.left);
     CGContextSaveGState(ctx);
     CGContextTranslateCTM(ctx, s.left, s.top);
     // A drawRect context is top-left / y-down and in POINTS, matching the
@@ -458,6 +511,15 @@
 - (void)send:(int)action touches:(NSSet<UITouch *> *)touches {
     CGPoint p = [[touches anyObject] locationInView:self];
     UIEdgeInsets s = self.safeAreaInsets;   // match the drawRect inset
+    NSLog(@"[Tina4Touch] action=%d x=%.1f y=%.1f safeTop=%.1f", action, p.x - s.left, p.y - s.top, s.top);
+    if (action == 1) {
+        int opened = tina4_open_link_at(p.x - s.left, p.y - s.top);
+        NSLog(@"[Tina4Link] hit-test x=%.1f y=%.1f opened=%d", p.x - s.left, p.y - s.top, opened);
+        if (opened) {
+            [self setNeedsDisplay];
+            return;
+        }
+    }
     int r = tina4_touch(action, p.x - s.left, p.y - s.top);
     if (r == TINA_SHOW_KBD)      [self showKeyboard];
     else if (r == TINA_FLING)    [self startFling];
@@ -496,7 +558,9 @@
 - (void)touchesBegan:(NSSet<UITouch *> *)t withEvent:(UIEvent *)e { [self stopFling]; [self send:0 touches:t]; }
 - (void)touchesMoved:(NSSet<UITouch *> *)t withEvent:(UIEvent *)e { [self send:2 touches:t]; }
 - (void)touchesEnded:(NSSet<UITouch *> *)t withEvent:(UIEvent *)e { [self send:1 touches:t]; }
-- (void)touchesCancelled:(NSSet<UITouch *> *)t withEvent:(UIEvent *)e { [self send:1 touches:t]; }
+- (void)touchesCancelled:(NSSet<UITouch *> *)t withEvent:(UIEvent *)e {
+    if (self.canvasTap.state != UIGestureRecognizerStateRecognized) [self send:1 touches:t];
+}
 
 // ---- momentum + caret --------------------------------------------------
 

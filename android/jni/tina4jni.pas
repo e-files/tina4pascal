@@ -31,6 +31,9 @@ var
   GCanvas: TAndroidCanvas = nil;
   GShell: TAndroidShell = nil;
   GAssetBase: string = '';        // filesDir where MainActivity extracted APK assets
+  GLinkVM: PJavaVM = nil;
+  GLinkCls: jclass = nil;
+  GLinkOpen: jmethodID = nil;
   {$IFDEF TINA_PROFILE}GProfT0: QWord;{$ENDIF}
 
 function JToStr(Env: PJNIEnv; S: jstring): string;
@@ -43,9 +46,32 @@ begin
   finally Env^.ReleaseStringUTFChars(Env, S, p); end;
 end;
 
+procedure AndroidOpenLink(const Href, Target: string);
+var Env: PJNIEnv; Cls: jclass; JUrl: jstring; A: array[0..0] of jvalue;
+begin
+  if (GLinkVM = nil) or (Href = '') then Exit;
+  Env := nil;
+  if GLinkVM^^.GetEnv(GLinkVM, @Env, JNI_VERSION_1_6) <> JNI_OK then
+    if GLinkVM^^.AttachCurrentThread(GLinkVM, @Env, nil) <> JNI_OK then Exit;
+  if GLinkCls = nil then
+  begin
+    Cls := Env^.FindClass(Env, 'com/tina4/pascal/MainActivity');
+    if Cls = nil then Exit;
+    GLinkCls := Env^.NewGlobalRef(Env, Cls);
+    GLinkOpen := Env^.GetStaticMethodID(Env, GLinkCls, 'openExternalUrl', '(Ljava/lang/String;)V');
+  end;
+  if GLinkOpen = nil then Exit;
+  JUrl := Env^.NewStringUTF(Env, PAnsiChar(AnsiString(Href)));
+  A[0].l := JUrl;
+  Env^.CallStaticVoidMethodA(Env, GLinkCls, GLinkOpen, @A[0]);
+  Env^.DeleteLocalRef(Env, JUrl);
+end;
+
 { cache the JavaVM and install the native (HttpURLConnection) HTTP backend }
 function JNI_OnLoad(VM: PJavaVM; Reserved: Pointer): jint; cdecl;
 begin
+  GLinkVM := VM;
+  Tina4SetLinkHandler(@AndroidOpenLink);
   InstallAndroidHttp(VM);
   InstallAndroidNotify(VM);       // notify.show → Java Tina4Notify → NotificationManager
   InstallAndroidShareItems(VM);   // share items → Java chooser + content provider
@@ -96,6 +122,9 @@ begin
     GShell := TAndroidShell.Create(GCanvas);
     GCanvas.SetAssetBase(GAssetBase);   // relative <img src> → extracted APK assets
     TinaInit(GCanvas);
+    { TinaInit is allowed to initialise the portable interaction state. Reassert
+      the shell hook after it so links work even if a host rebuild resets hooks. }
+    Tina4SetLinkHandler(@AndroidOpenLink);
   end;
   HttpPump;                    // deliver any completed HTTP responses (main thread)
   GCanvas.BeginFrame(Env, Canvas);
@@ -131,6 +160,7 @@ begin
     GShell := TAndroidShell.Create(GCanvas);
     GCanvas.SetAssetBase(GAssetBase);
     TinaInit(GCanvas);
+    Tina4SetLinkHandler(@AndroidOpenLink);
   end;
   if (W <= 0) or (H <= 0) then Exit;
   {$IFDEF TINA_PROFILE}t0 := GetTickCount64;{$ENDIF}

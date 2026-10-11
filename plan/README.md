@@ -38,6 +38,17 @@ honest as you go. Follow the shape the existing plans use:
 The non-negotiable is **Tests (real)**: the project's whole credibility is that a
 claimed pass actually passed. See the verification harnesses in MASTER.md.
 
+## Repository scope: keep framework documentation app-agnostic
+
+Tina4Pascal is a reusable framework repository, not an application repository.
+Plans, ADRs, README files, and framework documentation must not contain
+consumer-app-specific names, bundle identifiers, screenshots, file paths, UI
+labels, or acceptance criteria. Describe the framework behavior, shell contract,
+portable regression test, or generic consumer integration instead. App-specific
+details belong in the consuming application's repository and may be referenced
+only as external context when necessary; they must not become part of the
+Tina4Pascal plan or verification record.
+
 ## 2. ADRs — `plan/adr/NNNN-title.md`
 
 An Architecture Decision Record captures a **decision**, not a task: a design

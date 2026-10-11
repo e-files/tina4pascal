@@ -962,6 +962,10 @@ begin
     if js <> nil then FEnv^.DeleteLocalRef(FEnv, js);
     if local = '' then Exit;                  // still downloading — retry later
   end
+  else if (Length(Src) > 0) and (Src[1] = '/') then
+    local := Src                             // absolute file path
+  else if FAssetBase <> '' then
+    local := FAssetBase + '/' + Src           // relative → extracted APK asset
   else
     local := Src;                             // local file path
   s := JStr(local);

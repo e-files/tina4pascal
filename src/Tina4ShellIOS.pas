@@ -672,10 +672,13 @@ begin
       Exit;                                    // not ready — relayout will retry
     end;
   end
-  else if FileExists(Src) then
+  else if (Length(Src) > 0) and (Src[1] = '/') then
     localPath := Src
+  else if FAssetBase <> '' then
+    localPath := FAssetBase + '/' + Src
   else
-    Exit;
+    localPath := Src;
+  if not FileExists(localPath) then Exit;
 
   provider := CGDataProviderCreateWithFilename(PAnsiChar(localPath));
   if provider = nil then Exit;

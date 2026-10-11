@@ -305,6 +305,20 @@ begin
     for i := 1 to 6 do TapId('agree');    // 6 more Builds, InjectPseudo each time
     Check(True, 'no crash after a burst of pseudo-page rebuilds');
 
+    // A fixed footer remains in viewport coordinates after document scrolling.
+    TinaSetHtml('<body style="margin:0"><div style="height:1200px">Long page</div>' +
+      '<a id="fixed-link" href="https://example.test/fixed" style="position:fixed;' +
+      'left:20px;top:360px;width:120px;height:44px">Fixed link</a></body>');
+    Frame;
+    TinaTouch(0, 200, 300);
+    TinaTouch(2, 200, 100);
+    TinaTouch(1, 200, 100);
+    Frame;
+    LastLink := '';
+    Tap(80, 380);
+    Check(LastLink = 'https://example.test/fixed',
+      'fixed footer stays tappable after scrolling (got "' + LastLink + '")');
+
   finally
     Canvas.Free;
   end;

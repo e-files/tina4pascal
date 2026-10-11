@@ -86,6 +86,9 @@ function TinaLayoutOnly(WPx: Integer; Density: Single): Single;
 { A touch: Action 0=down, 1=up, 2=move; X/Y in physical pixels. Returns one of
   the TINA_* codes. }
 function TinaTouch(Action: Integer; X, Y: Single): Integer;
+{ Shell-level link probe used by native touch hosts before normal control
+  dispatch. Returns 1 when an external anchor under the point was opened. }
+function TinaOpenLinkAt(X, Y: Single): Boolean;
 { Wheel/trackpad scroll by (DX,DY) at (X,Y) device px — scrolls the box under
   the cursor, or the page. (Desktop shells deliver deltas; the engine scrolls.) }
 procedure TinaScrollBy(X, Y, DX, DY: Single);
@@ -332,6 +335,22 @@ begin
   if Tag <> nil then Tag.Attributes.AddOrSetValue(LowerCase(Name), Value);
 end;
 
+function TinaOpenLinkAt(X, Y: Single): Boolean;
+var t, a: THTMLTag; H: string;
+begin
+  Result := False;
+  if GRoot = nil then Exit;
+  t := HitTest(GRoot, X, Y + GScrollY, GScrollY);
+  a := t;
+  while (a <> nil) and
+        not (SameText(a.TagName, 'a') and a.HasAttribute('href')) do
+    a := a.Parent;
+  if a = nil then Exit;
+  H := LowerCase(Trim(a.GetAttribute('href')));
+  if (Pos('http://', H) <> 1) and (Pos('https://', H) <> 1) then Exit;
+  Result := Tina4InvokeLink(a.GetAttribute('href'), a.GetAttribute('target'));
+end;
+
 procedure DelAttr(Tag: THTMLTag; const Name: string);
 begin
   if Tag <> nil then Tag.Attributes.Remove(LowerCase(Name));
@@ -520,7 +539,7 @@ var hit, ctrl: THTMLTag; k: TControlKind;
 begin
   Result := nil;
   if GRoot = nil then Exit;
-  hit := HitTest(GRoot, cx, cy + GScrollY);
+  hit := HitTest(GRoot, cx, cy + GScrollY, GScrollY);
   ctrl := LabelTarget(hit);
   if ctrl = nil then
   begin
@@ -542,7 +561,7 @@ var ctrl: THTMLTag;
 begin
   Result := nil;
   if GRoot = nil then Exit;
-  ctrl := HitTest(GRoot, cx, cy + GScrollY);
+  ctrl := HitTest(GRoot, cx, cy + GScrollY, GScrollY);
   while (ctrl <> nil) and (CtrlKind(ctrl) <> ckRange) do ctrl := ctrl.Parent;
   Result := ctrl;
 end;
@@ -556,7 +575,7 @@ begin
   Result := nil;
   if GRoot = nil then Exit;
   docY := cy + GScrollY;
-  t := HitTest(GRoot, cx, docY);
+  t := HitTest(GRoot, cx, docY, GScrollY);
   while t <> nil do
   begin
     b := FindBoxForTag(GRoot, t);
@@ -578,7 +597,7 @@ begin
   Result := ''; box := nil;
   if GRoot = nil then Exit;
   docY := cy + GScrollY;
-  t := HitTest(GRoot, cx, docY);
+  t := HitTest(GRoot, cx, docY, GScrollY);
   while t <> nil do
   begin
     b := FindBoxForTag(GRoot, t);
@@ -1861,7 +1880,7 @@ function TinaHitTestInfo(X, Y: Single): string;
 var t: THTMLTag; b: TLayoutBox; s: TComputedStyle;
 begin
   if GRoot = nil then Exit('{"error":"no layout — call TinaFrame first"}');
-  t := HitTest(GRoot, X, Y + GScrollY);
+  t := HitTest(GRoot, X, Y + GScrollY, GScrollY);
   if t = nil then Exit('{"hit":null}');
   b := FindBoxForTag(GRoot, t);
   Result := '{"tag":"' + JEsc(t.TagName) + '"';
@@ -2142,6 +2161,13 @@ begin
     ckButton:
       begin
         BlurAll; GLayoutDirty := True; Result := TINA_HIDE_KBD;
+        { A button may opt into native external-link handling without relying
+          on an app action. This is useful for mobile shells, where a styled
+          external link is still a real form control for reliable touch hit
+          testing. }
+        if Ctrl.HasAttribute('data-href') and
+           Tina4InvokeLink(Ctrl.GetAttribute('data-href'), Ctrl.GetAttribute('target')) then
+          Exit;
         // a <button onclick=…> runs its handler (the generic onclick walk below
         // only fires for non-control tags, so a real <button> would otherwise
         // swallow its own click)
@@ -2343,7 +2369,36 @@ begin
          end;
          // a tap: a <label> activates its control; otherwise walk up to the
          // nearest control or onclick handler under the finger
-         hit := HitTest(GRoot, cx, cy + GScrollY);
+         hit := HitTest(GRoot, cx, cy + GScrollY, GScrollY);
+         { onclick is the app's explicit interaction contract. Resolve it from
+           the hit node upward before control classification, so text, SVG
+           children, and generic clickable wrappers all dispatch identically. }
+         anc := hit;
+         while (anc <> nil) and not anc.HasAttribute('onclick') do anc := anc.Parent;
+         if (anc <> nil) and anc.HasAttribute('onclick') then
+         begin
+           if GFocusedTag <> nil then begin BlurAll; GLayoutDirty := True; end;
+           DispatchAction(anc.GetAttribute('onclick'));
+           if BuiltinsDirty then begin BuiltinsDirty := False; GLayoutDirty := True; end;
+           Exit;
+         end;
+         { Promote external anchors before control/custom-element handling.
+           A link's text or SVG icon may be the hit node, and a renderer or
+           custom element can otherwise consume the tap before the ordinary
+           anchor fallback below is reached. In-app anchors such as #! remain
+           on the normal action path. }
+         anc := hit;
+         while (anc <> nil) and
+               not (SameText(anc.TagName, 'a') and anc.HasAttribute('href')) do
+           anc := anc.Parent;
+         if (anc <> nil) and
+            ((Pos('http://', LowerCase(Trim(anc.GetAttribute('href')))) = 1) or
+             (Pos('https://', LowerCase(Trim(anc.GetAttribute('href')))) = 1)) and
+            Tina4InvokeLink(anc.GetAttribute('href'), anc.GetAttribute('target')) then
+         begin
+           if GFocusedTag <> nil then begin BlurAll; GLayoutDirty := True; end;
+           Exit;
+         end;
          // Tier-2 custom element: a registered native element with an OnTap hook
          // handles the tap itself (walk up to the nearest one). If it reports
          // handled, relayout and stop — takes precedence over generic onclick.
@@ -2417,7 +2472,7 @@ begin
   GMoveRepaint := False;
   if GParser <> nil then FireOnMouseMove(FindOnMouseMoveTag(GParser.Root), cx, cy);
   if (GSheet = nil) or not GSheet.HasInteractiveSelectors then Exit;  // nothing hovers
-  SetHoverTag(HitTest(GRoot, cx, cy + GScrollY));
+  SetHoverTag(HitTest(GRoot, cx, cy + GScrollY, GScrollY));
 end;
 
 function TinaCursorAt(X, Y: Single): TTina4Cursor;

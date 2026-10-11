@@ -16,7 +16,7 @@ library tina4ios;
 uses
   ctypes, Math,
   CGContext, CGImage, CGColorSpace, CGDataProvider, CGGeometry,
-  Tina4RenderBackend, Tina4ShellIOS, Tina4Interact, Tina4Canvas2D, Tina4Http, Tina4HttpIOS,
+  Tina4RenderBackend, Tina4ShellIOS, Tina4Interact, Tina4HTMLDom, Tina4Canvas2D, Tina4Http, Tina4HttpIOS,
   Tina4ShareItems, Tina4ShareItemsIOS, Tina4Capabilities,
   Tina4Location, Tina4LocationIOS,
   ThreePascal, RamModel
@@ -25,6 +25,9 @@ uses
     initialization, so the app's Pascal logic ships in libtina4ios.a without
     editing this shell. Defaults to empty (app_units.inc). }
   {$I app_units.inc} ;
+
+procedure tina4_ios_open_url(Url: PAnsiChar); cdecl;
+  external name 'tina4_ios_open_url';
 
 var
   GCanvas: TIOSCanvas = nil;
@@ -75,6 +78,12 @@ begin
   IOSNotify('Push registered (' + Platform + ')', Copy(Token, 1, 16) + '...', 'push-token');
 end;
 
+procedure IOSOpenLink(const Href, Target: string);
+begin
+  if Href <> '' then
+    tina4_ios_open_url(PAnsiChar(AnsiString(Href)));
+end;
+
 procedure EnsureCanvas;
 begin
   if GCanvas = nil then
@@ -82,6 +91,7 @@ begin
     GCanvas := TIOSCanvas.Create;
     GCanvas.SetAssetBase(GAssetBase);
     TinaInit(GCanvas);
+    Tina4SetLinkHandler(@IOSOpenLink);
     InstallIOSHttp;          // native NSURLSession HTTP backend
     tina4_ios_notify_authorize;             // ask permission once (+ registers for remote push)
     Tina4SetNotifyHandler(@IOSNotify);      // wire notify.show → OS notification
@@ -104,9 +114,15 @@ end;
 procedure tina4_frame(Ctx: Pointer; W, H: cint; Density: single); cdecl;
 begin
   EnsureCanvas;
+  Tina4SetLinkHandler(@IOSOpenLink);
   HttpPump;                  // deliver completed HTTP responses on the main thread
   GCanvas.BeginFrame(CGContextRef(Ctx));
   TinaFrame(W, H, Density);
+end;
+
+procedure tina4_set_safe_area(Top, Right, Bottom, Left: single); cdecl;
+begin
+  SetSafeAreaInsets(Top, Right, Bottom, Left);
 end;
 
 { ---- ThreePascal demo: the walking Merino ram, rendered in pure software and
@@ -180,6 +196,11 @@ end;
 function tina4_touch(Action: cint; X, Y: single): cint; cdecl;
 begin
   Result := TinaTouch(Action, X, Y);
+end;
+
+function tina4_open_link_at(X, Y: single): cint; cdecl;
+begin
+  if TinaOpenLinkAt(X, Y) then Result := 1 else Result := 0;
 end;
 
 function tina4_tick: cint; cdecl;
@@ -367,8 +388,8 @@ begin
 end;
 
 exports
-  tina4_set_html, tina4_set_asset_base, tina4_frame, tina4_sheep_frame, tina4_frame_region, tina4_anim_region,
-  tina4_touch, tina4_tick, tina4_anim_active, tina4_http_pending,
+  tina4_set_html, tina4_set_asset_base, tina4_frame, tina4_set_safe_area, tina4_sheep_frame, tina4_frame_region, tina4_anim_region,
+  tina4_touch, tina4_open_link_at, tina4_tick, tina4_anim_active, tina4_http_pending,
   tina4_wants_keyboard, tina4_blur, tina4_blink_caret, tina4_key,
   tina4_focus_kind, tina4_focus_next, tina4_set_file, tina4_set_photo, tina4_set_recording,
   tina4_set_audio_level,
