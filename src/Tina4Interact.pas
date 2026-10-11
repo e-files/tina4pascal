@@ -1998,6 +1998,12 @@ begin
     background (canvas-background propagation) rather than a fixed colour. }
   if GHtml <> '' then
   begin
+    { A built-in DOM mutation (SetElementText/AppendChild/…) sets BuiltinsDirty.
+      The live loop folds that into GLayoutDirty between frames, but a DIRECT
+      TinaFrame caller (a headless --script/--snapshot render right after a
+      dispatched action) has no between-frames step — so honour it here too, or
+      runtime-added nodes never lay out. }
+    if BuiltinsDirty then begin BuiltinsDirty := False; GLayoutDirty := True; end;
     if GDocDirty then
       ParseDoc(cssW)
     else if GLayoutDirty or (Abs(GLayoutW - cssW) > 0.5) then

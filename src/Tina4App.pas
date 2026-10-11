@@ -29,7 +29,7 @@ procedure RunApp(const Title, TemplateDir, Template, JsonContext, IconPath: stri
 implementation
 
 uses
-  SysUtils, Classes, Tina4CanvasPdf,
+  SysUtils, Classes, Tina4CanvasPdf, Tina4Events,
 {$IFDEF WINDOWS}
   Windows, ShlObj, ActiveX, Tina4RenderBackend, Tina4ShellWin, Tina4ShellWinD2D, Tina4Interact;
 {$ENDIF}
@@ -173,7 +173,7 @@ end;
 { Replay a UI script headlessly. One command per line (blank / # lines skipped):
     click X Y | down X Y | up X Y | move X Y | drag X Y | hover X Y
     scroll X Y DX DY | key <text...> | enter | tab | backspace | esc
-    snap <file> | wait
+    dispatch <action> <args...> | snap <file> | wait
   Render() re-renders the frame after each action; Save(file) writes an image.
   This is deterministic UI automation - the same events, no human. }
 procedure RunScript(const Path: string; Render: TRenderProc; Save: TSaveProc);
@@ -213,6 +213,19 @@ begin
       begin
         rest := Copy(line, 5, MaxInt);          // text after "key "
         for k := 1 to Length(rest) do TinaKey(Ord(rest[k]));
+        Render();
+      end
+      else if cmd = 'dispatch' then
+      begin
+        { dispatch a NAMED action headlessly: `dispatch <action> <args...>`.
+          Args are the rest of the line verbatim (no "(...)" parsing), so a
+          value may contain spaces/paths. Lets a UI script drive app logic
+          directly, not just by coordinate — the headless analogue of an
+          onclick. }
+        rest := Trim(Copy(line, Length('dispatch') + 2, MaxInt));
+        k := Pos(' ', rest);
+        if k > 0 then DispatchActionArgs(Copy(rest, 1, k - 1), Trim(Copy(rest, k + 1, MaxInt)))
+        else DispatchActionArgs(rest, '');
         Render();
       end
       else if cmd = 'snap' then Save(Arg(1))
