@@ -113,7 +113,10 @@ type
     FillMesh, FillOpacityMask: Pointer;                    // 24,25
     DrawBitmap: procedure(This: Pointer; bitmap, destRect: Pointer;           // 26
       opacity: Single; interpMode: LongWord; srcRect: Pointer); stdcall;
-    DrawTextA, DrawTextLayout, DrawGlyphRun: Pointer;      // 27..29
+    DrawTextW: procedure(This: Pointer; str: PWideChar; strLen: LongWord;    // 27
+      textFormat: Pointer; const layoutRect: TD2DRectF; defaultBrush: Pointer;
+      options, measuringMode: LongWord); stdcall;
+    DrawTextLayout, DrawGlyphRun: Pointer;                 // 28,29
     SetTransform: procedure(This: Pointer; const m: TD2DMatrix); stdcall;     // 30
     GetTransform: Pointer;                                 // 31
     SetAntialiasMode: procedure(This: Pointer; mode: LongWord); stdcall;      // 32
@@ -159,6 +162,32 @@ type
     SetColor: procedure(This: Pointer; const color: TD2DColorF); stdcall;     // 8 (ID2D1SolidColorBrush)
   end;
 
+  { ---- DirectWrite (dwrite.dll) for text ---- }
+  PDWriteFactoryVtbl = ^TDWriteFactoryVtbl;
+  TDWriteFactoryVtbl = record
+    QueryInterface, AddRef, Release: Pointer;              // 0..2
+    GetSystemFontCollection, CreateCustomFontCollection,
+    RegisterFontCollectionLoader, UnregisterFontCollectionLoader,
+    CreateFontFileReference, CreateCustomFontFileReference, CreateFontFace,
+    CreateRenderingParams, CreateMonitorRenderingParams, CreateCustomRenderingParams,
+    RegisterFontFileLoader, UnregisterFontFileLoader: Pointer;   // 3..14
+    CreateTextFormat: function(This: Pointer; fontFamily: PWideChar;           // 15
+      fontCollection: Pointer; fontWeight, fontStyle, fontStretch: LongWord;
+      fontSize: Single; localeName: PWideChar; out textFormat: Pointer): HResult; stdcall;
+  end;
+
+  PDWriteTextFormatVtbl = ^TDWriteTextFormatVtbl;
+  TDWriteTextFormatVtbl = record
+    QueryInterface, AddRef, Release: Pointer;              // 0..2
+    SetTextAlignment, SetParagraphAlignment: Pointer;      // 3,4
+    SetWordWrapping: function(This: Pointer; wrap: LongWord): HResult; stdcall; // 5
+  end;
+
+  { cached DirectWrite text format (owned by the DWrite factory, survives RT rebuild) }
+  TD2DTextFormat = record
+    Family: WideString; Size: Single; Weight: Integer; Italic: Boolean; Fmt: Pointer;
+  end;
+
   { one cached GPU bitmap for a DrawRGBA source buffer }
   TD2DCachedBmp = record
     Hash: Cardinal; W, H: Integer; Bmp: Pointer;
@@ -195,7 +224,10 @@ type
     FCache: array of TD2DCachedBmp;  // DrawRGBA bitmap cache (owned by FRT)
     FNCache: Integer;
     FActivePolyPts: TTina4PointArray;  // DEVICE-space points of innermost clip-path (or nil)
-    FMeasDC: HDC;                 // GDI DC for MeasureText (text glyphs are a stub)
+    FMeasDC: HDC;                 // GDI DC for MeasureText
+    FDWrite: Pointer;             // IDWriteFactory (text)
+    FTF: array of TD2DTextFormat; // text-format cache
+    FNTF: Integer;
     function CreateTargetFor(w, h: Integer): Boolean;
     procedure ReleaseTarget;
     procedure FreeCache;
@@ -204,6 +236,8 @@ type
     procedure FillPolySpans(const Pts: TTina4PointArray);  // scanline fill via FillRectangle
     function BitmapFor(Buf: Pointer; BW, BH: Integer): Pointer;
     function MakeGeometry(const Pts: TTina4PointArray): Pointer;
+    function FaceFor(const Family: string): WideString;
+    function TextFormatFor(SizePx: Single; Styles: TTina4FontStyles): Pointer;
   public
     { PresentImmediately: True presents directly (uncapped — for the benchmark);
       False (default) uses the normal DWM-composited vsync present, which is
@@ -270,9 +304,20 @@ const
 
   IID_ID2D1Factory: TGUID = '{06152247-6F50-465A-9245-118BFD3B6007}';
 
+  { DirectWrite }
+  DWRITE_FACTORY_SHARED = 0;
+  DWRITE_FONT_STYLE_NORMAL = 0; DWRITE_FONT_STYLE_ITALIC = 2;
+  DWRITE_FONT_STRETCH_NORMAL = 5;
+  DWRITE_WORD_WRAPPING_NO_WRAP = 1;
+  DW_WEIGHT_NORMAL = 400; DW_WEIGHT_BOLD = 700;
+  IID_IDWriteFactory: TGUID = '{B859EE5A-D838-4B5B-A2E8-1ADC7D93DB48}';
+
 function D2D1CreateFactory(factoryType: LongWord; const riid: TGUID;
   pFactoryOptions: Pointer; out ppIFactory: Pointer): HResult; stdcall;
   external 'd2d1.dll' name 'D2D1CreateFactory';
+
+function DWriteCreateFactory(factoryType: LongWord; const iid: TGUID;
+  out factory: Pointer): HResult; stdcall; external 'dwrite.dll' name 'DWriteCreateFactory';
 
 { ---- vtable call helpers (explicit so the slot usage is obvious) ---- }
 function RT(obj: Pointer): PD2DRTVtbl; inline; begin RT := PD2DRTVtbl(PPointer(obj)^); end;
@@ -347,12 +392,19 @@ begin
   SetBkMode(FMeasDC, TRANSPARENT);
   r := D2D1CreateFactory(D2D1_FACTORY_SINGLE, IID_ID2D1Factory, nil, FFactory);
   if (r <> S_OK) or (FFactory = nil) then begin FAvailable := False; Exit; end;
+  if DWriteCreateFactory(DWRITE_FACTORY_SHARED, IID_IDWriteFactory, FDWrite) <> S_OK then
+    FDWrite := nil;   // no DWrite => DrawText degrades to no-op; the rest still works
   FAvailable := CreateTargetFor(0, 0);
 end;
 
 destructor TD2DCanvas.Destroy;
+var i: Integer;
 begin
   ReleaseTarget;
+  for i := 0 to FNTF - 1 do
+    if FTF[i].Fmt <> nil then ComRelease(FTF[i].Fmt);
+  FNTF := 0;
+  if FDWrite <> nil then begin ComRelease(FDWrite); FDWrite := nil; end;
   if FFactory <> nil then begin ComRelease(FFactory); FFactory := nil; end;
   if FMeasDC <> 0 then DeleteDC(FMeasDC);
   inherited Destroy;
@@ -572,18 +624,84 @@ begin
   RT(FRT)^.DrawLine(FRT, @p0, @p1, FBrush, t, nil);
 end;
 
-{ ---- text: glyph rendering is a documented gap (DirectWrite TODO); the hero has
-  no text. MeasureText still works (via a GDI DC) so layout stays correct for any
-  incidental text. ---- }
+{ ---- text (DirectWrite for glyphs, GDI for metrics) ---- }
+
+{ Map a CSS font-family list to a concrete Windows family name. }
+function TD2DCanvas.FaceFor(const Family: string): WideString;
+var f, first: string; p: Integer;
+begin
+  f := LowerCase(Trim(Family));
+  p := Pos(',', f); if p > 0 then first := Trim(Copy(f, 1, p - 1)) else first := f;
+  first := StringReplace(StringReplace(first, '"', '', [rfReplaceAll]), '''', '', [rfReplaceAll]);
+  if (first = '') or (first = 'sans-serif') or (first = 'system-ui') or (first = 'ui-sans-serif') then
+    Result := 'Segoe UI'
+  else if (first = 'serif') or (first = 'ui-serif') then Result := 'Times New Roman'
+  else if (first = 'monospace') or (first = 'mono') or (first = 'ui-monospace') then Result := 'Consolas'
+  else
+  begin
+    f := Trim(Family).Split([','])[0].Trim;
+    f := StringReplace(StringReplace(f, '"', '', [rfReplaceAll]), '''', '', [rfReplaceAll]);
+    Result := UTF8Decode(f);
+  end;
+end;
+
+{ Get (or create + cache) an IDWriteTextFormat for the current family/weight/style
+  at SizePx. Formats are owned by the DWrite factory and survive RT rebuilds. }
+function TD2DCanvas.TextFormatFor(SizePx: Single; Styles: TTina4FontStyles): Pointer;
+var face: WideString; wt, st, i: Integer; ital: Boolean; fmt: Pointer;
+begin
+  Result := nil;
+  if FDWrite = nil then Exit;
+  face := FaceFor(FontFamily);
+  if FontWeight >= 100 then wt := FontWeight else wt := DW_WEIGHT_NORMAL;
+  if (tfsBold in Styles) and (wt < DW_WEIGHT_BOLD) then wt := DW_WEIGHT_BOLD;
+  ital := tfsItalic in Styles;
+  for i := 0 to FNTF - 1 do
+    if (FTF[i].Weight = wt) and (FTF[i].Italic = ital)
+       and (Abs(FTF[i].Size - SizePx) < 0.5) and (FTF[i].Family = face) then
+      Exit(FTF[i].Fmt);
+  if ital then st := DWRITE_FONT_STYLE_ITALIC else st := DWRITE_FONT_STYLE_NORMAL;
+  if PDWriteFactoryVtbl(PPointer(FDWrite)^)^.CreateTextFormat(FDWrite, PWideChar(face),
+       nil, wt, st, DWRITE_FONT_STRETCH_NORMAL, SizePx, 'en-us', fmt) <> S_OK then Exit;
+  PDWriteTextFormatVtbl(PPointer(fmt)^)^.SetWordWrapping(fmt, DWRITE_WORD_WRAPPING_NO_WRAP);
+  if FNTF = Length(FTF) then SetLength(FTF, FNTF + 16);
+  FTF[FNTF].Family := face; FTF[FNTF].Size := SizePx; FTF[FNTF].Weight := wt;
+  FTF[FNTF].Italic := ital; FTF[FNTF].Fmt := fmt; Inc(FNTF);
+  Result := fmt;
+end;
+
 procedure TD2DCanvas.DrawText(X, Y: Single; const Text: string; FontSize: Single;
   Styles: TTina4FontStyles; Color: TTina4Color);
+var fmt: Pointer; w: WideString; m: TTina4TextMetrics; ly: Single;
 begin
-  // no-op: DirectWrite backend not implemented in this prototype
+  if (FRT = nil) or (Text = '') then Exit;
+  fmt := TextFormatFor(FontSize, Styles);
+  if fmt = nil then Exit;   // no DWrite: text skipped (degrade)
+  w := UTF8Decode(Text);
+  PD2DBrushVtbl(PPointer(FBrush)^)^.SetColor(FBrush, ColorF(Color));
+  // (X,Y) is the top-left of the text box; default near/leading alignment places
+  // the glyphs there. A wide/tall layout rect avoids any wrapping or clipping.
+  RT(FRT)^.DrawTextW(FRT, PWideChar(w), Length(w), fmt,
+    RectF(X, Y, X + 100000, Y + FontSize * 4), FBrush, 0, 0);
+  // underline / strike-through: DWrite's format path has no per-run decoration, so
+  // draw the line ourselves (DirectWrite TODO: IDWriteTextLayout for native ones).
+  if (tfsUnderline in Styles) or (tfsStrike in Styles) then
+  begin
+    m := MeasureText(Text, FontSize, Styles);
+    if tfsUnderline in Styles then
+    begin
+      ly := Y + m.Ascent + Max(1, FontSize * 0.08);
+      FillRect(X, ly, m.Width, Max(1, FontSize / 16), Color);
+    end;
+    if tfsStrike in Styles then
+      FillRect(X, Y + m.Ascent * 0.68, m.Width, Max(1, FontSize / 16), Color);
+  end;
 end;
 
 function TD2DCanvas.MeasureText(const Text: string; FontSize: Single;
   Styles: TTina4FontStyles): TTina4TextMetrics;
-var lf: LOGFONTW; f, old: HGDIOBJ; w: WideString; sz: SIZE; tm: TEXTMETRICW;
+var lf: LOGFONTW; face: WideString; f, old: HGDIOBJ; w: WideString; sz: SIZE;
+  tm: TEXTMETRICW; i, n: Integer;
 begin
   FillChar(Result, SizeOf(Result), 0);
   FillChar(lf, SizeOf(lf), 0);
@@ -592,6 +710,10 @@ begin
   if (tfsBold in Styles) and (lf.lfWeight < FW_BOLD) then lf.lfWeight := FW_BOLD;
   if tfsItalic in Styles then lf.lfItalic := 1;
   lf.lfCharSet := DEFAULT_CHARSET;
+  face := FaceFor(FontFamily);           // same family DrawText resolves to
+  n := Length(face); if n > 31 then n := 31;
+  for i := 1 to n do lf.lfFaceName[i - 1] := WideChar(face[i]);
+  lf.lfFaceName[n] := #0;
   f := CreateFontIndirectW(@lf);
   old := SelectObject(FMeasDC, f);
   w := UTF8Decode(Text);
