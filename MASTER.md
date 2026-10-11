@@ -60,6 +60,9 @@ gets an **ADR**. Conventions and templates: [`plan/README.md`](plan/README.md).
 - [ADR-0013](plan/adr/0013-builtins-dom-node-api.md) — runtime DOM node primitives in Tina4Builtins
 - [ADR-0014](plan/adr/0014-dynamic-node-animation-and-viewport.md) — dynamically-added nodes animate; apps can read the viewport
 
+### Drift tracker — `plan/drift/`
+- [framework-gaps](plan/drift/framework-gaps.md) — standing table of claim-vs-code gaps; read before promising a capability ([how to maintain](plan/drift/README.md))
+
 ### Task plans — `plan/`
 - [code-editing-highlighting](plan/code-editing-highlighting.md) — `<codearea>` + Tina4Highlight
 - [code-folding](plan/code-folding.md) — `<codearea>` indentation folding (Tina4CodeFold)
