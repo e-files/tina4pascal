@@ -140,6 +140,7 @@ type
     function FetchToFile(const Url, DestPath: string): Boolean; override;
     procedure StartTicker(IntervalMs: Integer); override;
     function PickFile: string; override;
+    function PickFolder: string; override;
     function CaptureCamera: string; override;
     function StartAudioCapture: Boolean; override;
     function StopAudioCapture: string; override;
@@ -1674,6 +1675,20 @@ begin
   panel := NSOpenPanel.openPanel;
   panel.setCanChooseFiles(True);
   panel.setCanChooseDirectories(False);
+  panel.setAllowsMultipleSelection(False);
+  if panel.runModal = NSModalResponseOK then
+    if panel.URLs.count > 0 then
+      Result := string(NSURL(panel.URLs.objectAtIndex(0)).path.UTF8String);
+end;
+
+function TCocoaShell.PickFolder: string;
+var
+  panel: NSOpenPanel;
+begin
+  Result := '';
+  panel := NSOpenPanel.openPanel;
+  panel.setCanChooseFiles(False);
+  panel.setCanChooseDirectories(True);   // the only difference from PickFile
   panel.setAllowsMultipleSelection(False);
   if panel.runModal = NSModalResponseOK then
     if panel.URLs.count > 0 then

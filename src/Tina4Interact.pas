@@ -41,6 +41,7 @@ const
   TINA_RECORD_START = 6; // a <recorder> was tapped idle — start mic capture
   TINA_RECORD_STOP  = 7; // a <recorder> was tapped while armed — stop + get file
   TINA_AUDIO_TOGGLE = 8; // an <audio controls> play/pause button was tapped
+  TINA_PICK_FOLDER  = 9; // a file input with `directory` was tapped — open folder picker
 
 { Wire up the engine to a shell canvas. Call once, before the first frame. }
 procedure TinaInit(Canvas: TTina4Canvas);
@@ -129,6 +130,9 @@ function TinaFocusKind: Integer;
 function TinaFocusNext: Integer;
 { A filename chosen by the system picker → the pending <input type=file>. }
 procedure TinaSetFile(const Name: string);
+{ A directory chosen by the system folder picker → the pending file input
+  (marked `directory`); sets its value to the full path and fires onchange. }
+procedure TinaSetFolder(const Path: string);
 { A captured photo path → <img id="shot"> (and stamps the camera control). }
 procedure TinaSetPhoto(const Path: string);
 { A finished recording's file path → the <recorder> that was armed: stamps its
@@ -2130,6 +2134,9 @@ begin
           begin SetAttr(Ctrl, 'recording', ''); Result := TINA_RECORD_START; end;
         end
         else if SameText(Ctrl.TagName, 'camera') then Result := TINA_CAPTURE
+        // a file input marked `directory` (or webkitdirectory) picks a FOLDER
+        else if Ctrl.HasAttribute('directory') or Ctrl.HasAttribute('webkitdirectory') then
+          Result := TINA_PICK_FOLDER
         else Result := TINA_PICK_FILE;
       end;
     ckButton:
@@ -2568,6 +2575,19 @@ begin
   if (GFileTag = nil) or (Name = '') then Exit;
   SetAttr(GFileTag, 'value', Name);
   GFileTag := nil; GLayoutDirty := True;
+end;
+
+{ Deliver a chosen folder path to the file input that opened the folder picker:
+  the full directory path becomes the control's `value`, and its `onchange` fires
+  so app code reacts — the folder analogue of TinaSetFile. }
+procedure TinaSetFolder(const Path: string);
+var tag: THTMLTag;
+begin
+  if (GFileTag = nil) or (Path = '') then Exit;
+  tag := GFileTag;
+  SetAttr(tag, 'value', Path);
+  GFileTag := nil; GLayoutDirty := True;
+  if tag.HasAttribute('onchange') then DispatchAction(tag.GetAttribute('onchange'));
 end;
 
 procedure TinaSetPhoto(const Path: string);

@@ -31,10 +31,10 @@ implementation
 uses
   SysUtils, Classes, Tina4CanvasPdf,
 {$IFDEF WINDOWS}
-  Windows, Tina4RenderBackend, Tina4ShellWin, Tina4Interact;
+  Windows, ShlObj, ActiveX, Tina4RenderBackend, Tina4ShellWin, Tina4Interact;
 {$ENDIF}
 {$IFDEF LINUX}
-  ctypes, Tina4RenderBackend, Tina4ShellLinux, Tina4Interact;
+  ctypes, Unix, Tina4RenderBackend, Tina4ShellLinux, Tina4Interact;
 {$ENDIF}
 {$IFDEF DARWIN}
   Tina4RenderBackend, Tina4ShellCocoa, Tina4Interact, Tina4LocationMacOS;
@@ -307,8 +307,25 @@ begin
   end;
 end;
 
+{ Native Windows folder picker (classic Shell browse dialog — no COM init needed).
+  Returns the chosen directory path or '' if cancelled. }
+function WinPickFolder: string;
+var bi: TBrowseInfoW; idl: PItemIDList; buf: array[0..MAX_PATH] of WideChar;
+begin
+  Result := '';
+  FillChar(bi, SizeOf(bi), 0);
+  bi.hwndOwner := GHwnd;
+  bi.ulFlags := BIF_RETURNONLYFSDIRS;
+  idl := SHBrowseForFolderW(@bi);
+  if idl <> nil then
+  begin
+    if SHGetPathFromIDListW(idl, @buf[0]) then Result := WideCharToString(@buf[0]);
+    CoTaskMemFree(idl);
+  end;
+end;
+
 function WWndProc(hwnd: HWND; msg: UINT; wp: WPARAM; lp: LPARAM): LRESULT; stdcall;
-var ps: PAINTSTRUCT; dc: HDC; x, y, dz: Integer;
+var ps: PAINTSTRUCT; dc: HDC; x, y, dz: Integer; fdir: string;
 begin
   Result := 0;
   case msg of
@@ -318,7 +335,10 @@ begin
     WM_LBUTTONDOWN: begin GMouseDown := True; SetCapture(hwnd);
       x := SmallInt(lp and $FFFF); y := SmallInt((lp shr 16) and $FFFF); TinaTouch(0, x, y); WRepaint; end;
     WM_LBUTTONUP: begin GMouseDown := False; ReleaseCapture;
-      x := SmallInt(lp and $FFFF); y := SmallInt((lp shr 16) and $FFFF); TinaTouch(1, x, y); WRepaint; end;
+      x := SmallInt(lp and $FFFF); y := SmallInt((lp shr 16) and $FFFF);
+      if TinaTouch(1, x, y) = TINA_PICK_FOLDER then   // a `directory` file input was tapped
+      begin fdir := WinPickFolder; if fdir <> '' then TinaSetFolder(fdir); end;
+      WRepaint; end;
     WM_MOUSEMOVE: begin x := SmallInt(lp and $FFFF); y := SmallInt((lp shr 16) and $FFFF);
       if GMouseDown then begin TinaTouch(2, x, y); WRepaint; end
       else begin TinaHover(x, y); if TinaTakeMoveRepaint then WRepaint; end; end;
@@ -451,6 +471,19 @@ function XSetWMProtocols(d: PXDisplay; w: TXID; protocols: Pointer; count: cint)
 
 function LI32(const ev; off: Integer): cint; begin Result := PInt32(PByte(@ev) + off)^; end;
 
+{ Native Linux folder picker via zenity (the de-facto GTK dialog helper); reads
+  the chosen directory from its stdout. Returns '' if cancelled or zenity absent. }
+function LinuxPickFolder: string;
+var f: Text; s: string;
+begin
+  Result := '';
+  if POpen(f, 'zenity --file-selection --directory 2>/dev/null', 'R') <> 0 then Exit;
+  s := '';
+  if not Eof(f) then ReadLn(f, s);
+  PClose(f);
+  Result := Trim(s);
+end;
+
 { current headless render target (a Pixmap) for --snapshot/--script }
 var
   GLdpy: PXDisplay; GLpixmap: TXID; GLcanvas: TX11Canvas; GLw, GLh: cint;
@@ -470,7 +503,7 @@ end;
 procedure RunApp(const Title, TemplateDir, Template, JsonContext, IconPath: string; W, H: Integer);
 var
   dpy: PXDisplay; scr: cint; win, pixmap: TXID; gc: TGC; canvas: TX11Canvas;
-  GWv, GHv, pmW, pmH: cint; mouseDown: Boolean; wmDelete: TXID; ev: array[0..191] of Byte; etype: Integer;
+  GWv, GHv, pmW, pmH: cint; mouseDown: Boolean; wmDelete: TXID; ev: array[0..191] of Byte; etype: Integer; fdir: string;
   snap, dk, dout: string; aw, ah: Integer; overlay: Boolean; ix, iy: Single;
 
   procedure EnsurePixmap;
@@ -534,7 +567,10 @@ begin
       ConfigureNotify_: if (LI32(ev, OFF_CFG_W) > 0) and (LI32(ev, OFF_CFG_H) > 0) then
         begin GWv := LI32(ev, OFF_CFG_W); GHv := LI32(ev, OFF_CFG_H); end;
       ButtonPress_: begin mouseDown := True; TinaTouch(0, LI32(ev, OFF_X), LI32(ev, OFF_Y)); Render; end;
-      ButtonRelease_: begin mouseDown := False; TinaTouch(1, LI32(ev, OFF_X), LI32(ev, OFF_Y)); Render; end;
+      ButtonRelease_: begin mouseDown := False;
+        if TinaTouch(1, LI32(ev, OFF_X), LI32(ev, OFF_Y)) = TINA_PICK_FOLDER then
+        begin fdir := LinuxPickFolder; if fdir <> '' then TinaSetFolder(fdir); end;
+        Render; end;
       MotionNotify_: if mouseDown then begin TinaTouch(2, LI32(ev, OFF_X), LI32(ev, OFF_Y)); Render; end
         else begin TinaHover(LI32(ev, OFF_X), LI32(ev, OFF_Y)); if TinaTakeMoveRepaint then Render; end;
       ClientMessage_: if TXID(PPtrUInt(PByte(@ev) + OFF_CM_DATA0)^) = wmDelete then Break;
@@ -581,7 +617,16 @@ begin
   LastPaintMs := Integer(GetTickCount64 - t0);   // drives adaptive anim pacing in Tick
 end;
 procedure TAppDriver.Down(X, Y: Single); begin TinaTouch(0, X, Y); Shell.Invalidate; end;
-procedure TAppDriver.Up(X, Y: Single);   begin TinaTouch(1, X, Y); Shell.Invalidate; end;
+procedure TAppDriver.Up(X, Y: Single);
+var dir: string;
+begin
+  if TinaTouch(1, X, Y) = TINA_PICK_FOLDER then   // a `directory` file input was tapped
+  begin
+    dir := Shell.PickFolder;
+    if dir <> '' then TinaSetFolder(dir);
+  end;
+  Shell.Invalidate;
+end;
 procedure TAppDriver.Move(X, Y: Single); begin TinaHover(X, Y); if TinaTakeMoveRepaint then Shell.Invalidate; end;
 procedure TAppDriver.Drag(X, Y: Single); begin TinaTouch(2, X, Y); Shell.Invalidate; end;
 procedure TAppDriver.Scroll(X, Y, DX, DY: Single); begin TinaScrollBy(X, Y, DX, DY); Shell.Invalidate; end;
