@@ -645,6 +645,7 @@ type
     Shell: TCocoaShell;
     LastPaintMs: Integer;   // wall time the last frame took
     LastRepaint: QWord;     // when we last posted an animation repaint
+    LastCaretMs: QWord;     // when the caret blink phase last flipped
     procedure Paint(Canvas: TTina4Canvas; W, H: Single);
     procedure Down(X, Y: Single);
     procedure Up(X, Y: Single);
@@ -708,6 +709,13 @@ begin
 {$IFDEF DARWIN}
   if Tina4LocationMacOSPump then Shell.Invalidate;
 {$ENDIF}
+  // Blink the text caret ~every 530ms while a field is focused.
+  nowMs := GetTickCount64;
+  if nowMs - LastCaretMs >= 530 then
+  begin
+    LastCaretMs := nowMs;
+    if TinaBlinkCaret = 1 then Shell.Invalidate;
+  end;
   // TinaTick advances the animation clock by real elapsed time and drives momentum.
   // Pace actual repaints adaptively to avoid overloading the CPU.
   if TinaTick = 1 then
