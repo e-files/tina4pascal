@@ -1,7 +1,8 @@
 # Framework gaps — what Tina4Pascal ships vs. what consumers assume
 
 Live table of drift (see [README.md](README.md) for how to maintain it). Last
-audited against `main` on 2026-10-11. Evidence is `file:line` in this repo.
+audited against `main` on 2026-10-11. Evidence is `file:line` in this repo. The
+per-OS capability matrix is in [os-parity.md](os-parity.md).
 
 ## Shipped (verified in source)
 
@@ -19,9 +20,13 @@ audited against `main` on 2026-10-11. Evidence is `file:line` in this repo.
 
 ## Open gaps
 
-### 🔴 Folder picker — and the file picker on Windows/Linux
+### ⏳ Folder picker — ADDRESSED by PR #37 (file picker on Win/Linux still open)
 
-The headline M0 item, and **larger than first stated**. The truth in source:
+The headline M0 item, and **larger than first stated**. **PR #37** adds the folder
+picker (contract `PickFolder` + macOS/Windows/Linux impls + the `directory` trigger
++ the desktop dispatch) — macOS run-verified, Windows cross-compiled, Linux
+code-complete but compile-unverified (no Linux cross-RTL, see below). Still open:
+a **file** picker (`PickFile`) on Windows/Linux (item 6). Original findings:
 
 - The contract declares only a **file** picker: `TTina4Shell.PickFile`
   (`src/Tina4RenderBackend.pas:261` virtual, `:493` base no-op). There is **no
@@ -45,9 +50,24 @@ The headline M0 item, and **larger than first stated**. The truth in source:
 6. **While here, give Windows + Linux a real `PickFile`** — they need it regardless,
    and the dialog plumbing is shared with the folder case.
 
-Verify: macOS runs here (build + run). Windows/Linux shells cross-compile from the
-Mac toolchain (`-Twin64 -Px86_64`, `-Tlinux -Px86_64`) — compile-check there; run
-on the real OS before ticking the box.
+Verify: macOS runs here (build + run). Windows cross-compiles from the Mac
+toolchain (`-Twin64 -Px86_64`); run on the real OS before ticking the box.
+
+### 🔴 Linux cross-RTL missing from the vendored toolchain
+
+`tina4pascal build linux` (`-Tlinux -Px86_64`) fails at **"Can't find unit system"**
+— `~/fpc` has no `units/x86_64-linux/system.ppu`. So Linux targets cannot be built
+or verified on the current Mac toolchain, though ADR-0003 lists Linux as supported.
+Found while verifying the folder picker (PR #37): the Linux code is complete but
+unbuildable here. **To close:** add the Linux x86_64 (and arm64) cross-RTL to the
+`toolchain/build-crosses.sh` output so `~/fpc/units/*-linux/` exists.
+
+### 🟡 Desktop file picker (`PickFile`) on Windows/Linux
+
+Now that PR #37 wires the desktop pick *dispatch* (`TINA_PICK_*` → shell), a real
+`PickFile` on Windows (`GetOpenFileNameW`) and Linux (`zenity --file-selection`) is
+a small add sharing that plumbing. Today `<input type=file>` is a no-op on desktop
+outside `htmlviewer`.
 
 ### 🟡 Richer highlighter string / sigil support (optional)
 

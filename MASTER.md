@@ -62,6 +62,7 @@ gets an **ADR**. Conventions and templates: [`plan/README.md`](plan/README.md).
 
 ### Drift tracker — `plan/drift/`
 - [framework-gaps](plan/drift/framework-gaps.md) — standing table of claim-vs-code gaps; read before promising a capability ([how to maintain](plan/drift/README.md))
+- [os-parity](plan/drift/os-parity.md) — per-OS capability matrix (macOS/Win/Linux/iOS/Android)
 
 ### Task plans — `plan/`
 - [code-editing-highlighting](plan/code-editing-highlighting.md) — `<codearea>` + Tina4Highlight
