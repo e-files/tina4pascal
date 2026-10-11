@@ -259,6 +259,9 @@ type
     { Open the OS file picker; returns the chosen path or '' if cancelled.
       Default '' (no picker); backends override with the native dialog. }
     function PickFile: string; virtual;
+    { Open the OS folder picker; returns the chosen directory or '' if cancelled.
+      Default '' (no picker); backends override with the native directory dialog. }
+    function PickFolder: string; virtual;
     { Capture one still image from the OS camera to a temp file; returns its
       path or '' if unavailable/cancelled. Default ''. }
     function CaptureCamera: string; virtual;
@@ -491,6 +494,11 @@ begin
 end;
 
 function TTina4Shell.PickFile: string;
+begin
+  Result := '';
+end;
+
+function TTina4Shell.PickFolder: string;
 begin
   Result := '';
 end;
