@@ -663,12 +663,21 @@ begin
 end;
 
 { Set the :hover element (nil to clear). }
+{ :hover applies to the element under the pointer AND all its ancestors (CSS
+  Selectors 4). The hit test returns the deepest box — an <svg> icon inside a
+  button, a nested block — so marking only that element left `.btn:hover`
+  unmatched whenever the pointer was over a child box. Mark / clear the chain. }
+procedure MarkHoverChain(T: THTMLTag; V: Boolean);
+begin
+  while T <> nil do begin T.IsHovered := V; T := T.Parent; end;
+end;
+
 procedure SetHoverTag(T: THTMLTag);
 begin
   if T = GHoverTag then Exit;
-  if GHoverTag <> nil then GHoverTag.IsHovered := False;
+  MarkHoverChain(GHoverTag, False);
   GHoverTag := T;
-  if GHoverTag <> nil then GHoverTag.IsHovered := True;
+  MarkHoverChain(GHoverTag, True);
   PseudoDirty;
 end;
 
