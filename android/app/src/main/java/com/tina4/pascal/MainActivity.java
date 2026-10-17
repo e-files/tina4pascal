@@ -45,13 +45,9 @@ public class MainActivity extends Activity {
         instance = this;
         Tina4Share.init(this);
         Tina4Location.init(this);
-        // local notifications: hold the app context + channel; ask permission on 33+
+        // local notifications: hold the context + channel. The API 33+ permission is
+        // asked on the first notify.show, not here — apps that never notify never ask.
         Tina4Notify.init(this);
-        if (Build.VERSION.SDK_INT >= 33 &&
-            checkSelfPermission("android.permission.POST_NOTIFICATIONS")
-                != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"}, 4712);
-        }
         // No ActionBar (theme). Keep the system bars visually edge-to-edge, but
         // place the engine view inside their safe rectangle. Android 15/16
         // enforces edge-to-edge for current target SDKs, so relying on the old
@@ -289,6 +285,10 @@ public class MainActivity extends Activity {
                 beginRecording();
             else if (view != null)
                 view.onRecordingDone("");   // denied → roll back to idle
+        }
+        if (requestCode == Tina4Notify.REQUEST_CODE) {
+            Tina4Notify.permissionResult(grantResults.length > 0 &&
+                grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED);
         }
         if (requestCode == Tina4Location.REQUEST_CODE) {
             boolean allowed = grantResults.length > 0 &&

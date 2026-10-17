@@ -790,12 +790,21 @@ proj_android_build() {
   # use the installed wrapper bin directory just like android/build.sh does.
   FPC_CROSS_BIN="${FPC_CROSS_BIN:-$FPC_HOME/cross/bin/aarch64-android}"
   export PATH="$FPC_CROSS_BIN:$FPC_HOME/bin:$PATH"
-  for abi in ${ABIS:-arm64-v8a}; do
+  # Both ABIs by default: many budget/older phones are 32-bit armeabi-v7a only and
+  # an arm64-only APK fails there with INSTALL_FAILED_NO_MATCHING_ABIS
+  # (docs/ANDROID.md). ABIS=arm64-v8a gives a faster single-ABI dev build.
+  _aunits="$FPC_HOME/lib/fpc/$("$FPC" -iV 2>/dev/null)/units"
+  for abi in ${ABIS:-arm64-v8a armeabi-v7a}; do
     case "$abi" in
-      arm64-v8a)   af="-Tandroid -Paarch64" ;;
-      armeabi-v7a) af="-Tandroid -Parm -CpARMV7A -CfVFPV3" ;;
+      arm64-v8a)   af="-Tandroid -Paarch64";               _rtl="aarch64-android" ;;
+      armeabi-v7a) af="-Tandroid -Parm -CpARMV7A -CfVFPV3"; _rtl="arm-android" ;;
       *) warn "skip unknown ABI $abi"; continue ;;
     esac
+    if [ ! -f "$_aunits/$_rtl/rtl/system.ppu" ]; then
+      [ -n "${ABIS:-}" ] && die "ABI $abi requested but the $_rtl cross RTL is missing → see docs/ANDROID.md"
+      warn "skipping $abi — no $_rtl cross RTL (APK won't install on 32-bit phones; see docs/ANDROID.md)"
+      continue
+    fi
     o="$APPDIR/jniLibs/$abi"; mkdir -p "$o"; w="$(mktemp -d)"
     say "${D}fpc $af → libtina4.so ($abi)${Z}"
     "$FPC" -Mdelphi $af -O2 -Xs -Fu"$SRC" -Fu"$ROOT/3d" -Fu"$ROOT/examples/sheep3d" $aappdirs -FE"$w" -FU"$w" \
