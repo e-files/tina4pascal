@@ -139,6 +139,27 @@ else
 fi
 have_jdk() { [ -n "$JAVA_HOME" ]; }
 
+# make_debug_keystore <path> — the standard Android debug key (alias
+# androiddebugkey, passwords "android"). Safe to commit; never use for release.
+make_debug_keystore() {
+  have_jdk || return 1
+  mkdir -p "$(dirname "$1")"
+  "$KEYTOOL" -genkeypair -noprompt -keystore "$1" \
+    -storepass android -keypass android -alias androiddebugkey \
+    -dname "CN=Android Debug,O=Android,C=US" -keyalg RSA -keysize 2048 \
+    -validity 10000 >/dev/null 2>&1
+}
+
+# bundle_id_for <name> — reverse-DNS app id valid on BOTH stores. Android
+# applicationIds allow [a-z0-9_] per segment (no '-'), iOS bundle ids allow
+# [a-z0-9-] (no '_'), so keep letters and digits only; Android segments can't
+# start with a digit.
+bundle_id_for() {
+  _seg="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9')"
+  case "$_seg" in ''|[0-9]*) _seg="app$_seg" ;; esac
+  printf 'com.tina4.%s' "$_seg"
+}
+
 # Xcode readiness (macOS). Two states break builds in confusing ways: xcode-select
 # pointing at the Command Line Tools (no iPhoneOS SDK -> iOS cross builds fail) and
 # an unaccepted Xcode licence (every `as`/`ld` call exits 69 -> FPC's own
@@ -712,7 +733,7 @@ proj_android_build() {
 
   name="$(jget name "$(basename "$PWD")")"
   title="$(jget title "$name")"
-  bundle="$(jget bundleId "com.tina4.$name")"
+  bundle="$(jget bundleId "$(bundle_id_for "$name")")"
   minsdk="$(jget_num androidMinSdk 21)"; tgtsdk="$(jget_num androidTargetSdk 34)"
   vcode="$(jget_num versionCode 1)"; vname="$(jget versionName 1.0)"
   say "${B}— android: $name ($bundle) v$vname ($vcode) —${Z}"
@@ -858,6 +879,14 @@ PYEOF
     ok "${wsuf:+Wear }APK (RELEASE-signed) → build/android/$name$wsuf.apk"
   else
     ks="$PWD/signing/debug.keystore"; [ -f "$ks" ] || ks="$ROOT/android/debug.keystore"
+    if [ ! -f "$ks" ]; then
+      # neither the project's nor the framework's debug key exists (e.g. `new` ran
+      # without a JDK) — create the project's committable one rather than letting
+      # apksigner die with FileNotFoundException.
+      ks="$PWD/signing/debug.keystore"
+      make_debug_keystore "$ks" || die "no debug keystore and no JDK to create one → brew install openjdk@17"
+      warn "created debug key → signing/debug.keystore (commit it so debug builds install over each other)"
+    fi
     "$BT/apksigner" sign --ks "$ks" --ks-pass pass:android --key-pass pass:android \
       --out "$apk" "$aout/aligned.apk" || die "debug signing failed"
     ok "${wsuf:+Wear }APK (debug-signed) → build/android/$name$wsuf.apk"
@@ -941,7 +970,7 @@ proj_ios_stage() {
   iwork="$PWD/build/ios"; ihost="$iwork/host"; mkdir -p "$iwork"
   proj_dump_html "$iwork/index.html"
   iname="$(jget name "$(basename "$PWD")")"
-  ibundle="$(jget bundleId "com.tina4.$iname")"
+  ibundle="$(jget bundleId "$(bundle_id_for "$iname")")"
   iteam="$(ios_team)"    # env wins, else tina4.json ios.team (see ios_team)
   ivname="$(jget versionName 1.0)"; ivcode="$(jget_num versionCode 1)"
   # stage the reference iOS host, then build the ENGINE from the STAGED copy so a
@@ -1254,7 +1283,7 @@ EOF
   "main": "app.pas",
 
   // Reverse-DNS id used by the app stores (Play applicationId / iOS bundle id).
-  "bundleId": "com.tina4.$name",
+  "bundleId": "$(bundle_id_for "$name")",
 
   "window": { "width": 900, "height": 640 },
   "entry":  "src/templates/index.twig",   // Twig template rendered as the UI
@@ -1319,12 +1348,8 @@ EOF
   is portable while the key stays private.
 EOF
   # committable debug keystore — deterministic installable debug builds anywhere
-  if have_jdk; then
-    "$KEYTOOL" -genkeypair -noprompt -keystore "$d/signing/debug.keystore" \
-      -storepass android -keypass android -alias androiddebugkey \
-      -dname "CN=Android Debug,O=Android,C=US" -keyalg RSA -keysize 2048 \
-      -validity 10000 >/dev/null 2>&1 || true
-  fi
+  make_debug_keystore "$d/signing/debug.keystore" \
+    || warn "no JDK found, so signing/debug.keystore was not created — it will be made on first android build (brew install openjdk@17)"
   # app.pas — the entry point (configurable via tina4.json "main")
   cat > "$d/app.pas" <<EOF
 program $name;
@@ -1447,8 +1472,7 @@ cmd_new() {
   # also break the sed substitutions below
   case "$name" in */*|*' '*) die "name must be a simple folder name (no slashes or spaces)";; esac
   [ -e "$name" ] && die "'$name' already exists"
-  # reverse-DNS-ish bundle id from the name (lower-case, non-[a-z0-9.-] dropped)
-  bid="com.tina4.$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9.-')"
+  bid="$(bundle_id_for "$name")"
   mkdir -p "$name/src"
   cp "$ROOT/examples/starter/app.html" "$name/app.html"
   cp "$ROOT/examples/starter/src/AppLogic.pas" "$name/src/AppLogic.pas"
@@ -1457,7 +1481,10 @@ cmd_new() {
   sed "s/My Tina4 App/$name/g" "$ROOT/examples/starter/main.pas" > "$name/main.pas"
   sed -e "s/My Tina4 App/$name/g" -e "s#com\.tina4\.myapp#$bid#" \
       "$ROOT/examples/starter/tina4.json" > "$name/tina4.json"
-  ok "created ${B}$name/${Z}  (main.pas + app.html + src/AppLogic.pas + tina4.json)"
+  # committable debug key so Android debug builds sign (and reinstall over each other)
+  make_debug_keystore "$name/signing/debug.keystore" \
+    || warn "no JDK found, so signing/debug.keystore was not created — it will be made on first android build (brew install openjdk@17)"
+  ok "created ${B}$name/${Z}  (main.pas + app.html + src/AppLogic.pas + tina4.json)  ${D}bundle id $bid${Z}"
   say "  run it:   ${B}cd $name && tina4pascal dev${Z}"
   say "  mobile:   ${B}tina4pascal build ios${Z}  ·  ${B}tina4pascal build android${Z}"
 }
@@ -1515,7 +1542,7 @@ cmd_dev() {
   # assets/ and localStore resolve exactly as before — while LaunchServices reads
   # the enclosing bundle for its identity. Fixes the "exec" Dock icon/name.
   dname="$(cd "$d" && jget name "$(basename "$(pwd)")")"
-  dbid="$(cd "$d" && jget bundleId "com.tina4.$dname")"
+  dbid="$(cd "$d" && jget bundleId "$(bundle_id_for "$dname")")"
   dapp="$o/$dname.app"; rm -rf "$dapp"
   mkdir -p "$dapp/Contents/MacOS" "$dapp/Contents/Resources"
   cp "$o/app" "$dapp/Contents/MacOS/$dname"
@@ -1660,7 +1687,7 @@ proj_android_deploy() {
   [ -x "$adb" ] || command -v adb >/dev/null 2>&1 || die "adb not found — tina4pascal setup android"
   [ "$("$adb" devices 2>/dev/null | grep -cw device)" -gt 0 ] || die "no device/emulator (adb devices — a Wear OS AVD counts)"
   build_project android                        # TINA4_WEAR (if set) carries into the manifest
-  name="$(jget name "$(basename "$PWD")")"; bundle="$(jget bundleId "com.tina4.$name")"
+  name="$(jget name "$(basename "$PWD")")"; bundle="$(jget bundleId "$(bundle_id_for "$name")")"
   wsuf=""; [ -n "${TINA4_WEAR:-}" ] && wsuf="-wear"
   say "→ installing $name$wsuf.apk…"
   "$adb" install -r "$PWD/build/android/$name$wsuf.apk" >/dev/null || die "install failed"
@@ -1674,7 +1701,7 @@ proj_android_deploy() {
 android_project_package() {
   if is_project 2>/dev/null; then
     _aname="$(jget name "$(basename "$PWD")")"
-    jget bundleId "com.tina4.$_aname"
+    jget bundleId "$(bundle_id_for "$_aname")"
   else
     printf '%s' "$ANDROID_PKG"
   fi
@@ -1717,7 +1744,7 @@ proj_publish() {
 # service-account JSON (TINA4_PLAY_JSON) — a SECRET, keep it in ~/.tina4/. Uses
 # curl + openssl for the RS256 JWT → OAuth token → edits.insert/upload/track/commit.
 proj_publish_android() {
-  name="$(jget name "$(basename "$PWD")")"; bundle="$(jget bundleId "com.tina4.$name")"
+  name="$(jget name "$(basename "$PWD")")"; bundle="$(jget bundleId "$(bundle_id_for "$name")")"
   aab="$PWD/build/android/$name.aab"
   track="${TINA4_PLAY_TRACK:-internal}"
   [ -f "$aab" ] || die "no AAB — run: tina4pascal release android"
@@ -1832,7 +1859,7 @@ cmd_ios() {
   _ibundle="$IOS_BUNDLE"
   if is_project 2>/dev/null; then
     _iname="$(jget name "$(basename "$PWD")")"
-    _ibundle="$(jget bundleId "com.tina4.$_iname")"
+    _ibundle="$(jget bundleId "$(bundle_id_for "$_iname")")"
   fi
   xcrun devicectl device process launch --terminate-existing --device "$udid" "$_ibundle" >/dev/null 2>&1 \
     || die "launch failed (installed? iPhone unlocked?)"
@@ -1849,7 +1876,7 @@ cmd_launch() {
   _pbid=""
   if is_project 2>/dev/null; then
     _pname="$(jget name "$(basename "$PWD")")"
-    _pbid="$(jget bundleId "com.tina4.$_pname")"
+    _pbid="$(jget bundleId "$(bundle_id_for "$_pname")")"
   fi
   case "$plat" in
     ios)
