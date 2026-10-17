@@ -2414,6 +2414,18 @@ begin
            neTap := ElementTapProc(ne.TagName);
            if Assigned(neTap) then
            begin
+             // tell the hook where on the element the tap landed (same origin as
+             // its Paint hook: the box's document position)
+             sb := FindBoxForTag(GRoot, ne);
+             if sb <> nil then
+             begin
+               ElementTapX := cx - sb.X;  ElementTapY := cy + GScrollY - sb.Y;
+               ElementTapW := sb.W;       ElementTapH := sb.H;
+             end
+             else
+             begin
+               ElementTapX := 0; ElementTapY := 0; ElementTapW := 0; ElementTapH := 0;
+             end;
              if neTap(ne) then begin GLayoutDirty := True; Exit; end;
              Break;
            end;

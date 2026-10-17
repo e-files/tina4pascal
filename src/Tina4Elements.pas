@@ -57,6 +57,17 @@ type
     OnTap: TElemTapProc;  // Tier-2 only
   end;
 
+var
+  { Where the current tap landed on a Tier-2 element, in CSS px relative to the
+    same box its Paint hook draws into (X/Y origin, W/H size). Set by the engine
+    immediately before OnTap runs, so a hook can tell WHERE it was tapped (a
+    board, a slider, a chart point) — the hook signature stays unchanged. Only
+    meaningful inside OnTap. }
+  ElementTapX: Single = 0;
+  ElementTapY: Single = 0;
+  ElementTapW: Single = 0;
+  ElementTapH: Single = 0;
+
 { ---- registration ------------------------------------------------------ }
 
 { Tier 1: a template element. Name is case-insensitive. DefaultCSS (optional) is

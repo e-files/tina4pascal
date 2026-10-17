@@ -96,7 +96,10 @@ works everywhere, no core `SameText` edits. Two tiers, both proven by
   its own tag and draws itself through the canvas contract (Paint hook in
   PaintBox, clipped like `<canvas>`) and responds to a tap (OnTap hook in
   Tina4Interact + the macOS host), sized by its registered CSS. Portable to every
-  shell by construction.
+  shell by construction. During OnTap, `ElementTapX/Y` give where the tap landed
+  and `ElementTapW/H` the box size, in the same CSS-px space the Paint hook draws
+  into — so a board, slider or chart can map the tap to its own content
+  (`tests/test_elements.pas`).
 
 | Element | Status | Note |
 |---|---|---|

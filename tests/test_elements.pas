@@ -46,9 +46,12 @@ begin
 end;
 
 { Tier-2 tap hook — increments the element's own data-count and reports handled. }
+var GTapX, GTapY, GTapW, GTapH: Single;   // last ElementTap* seen by TapSpark
+
 function TapSpark(const Tag: THTMLTag): Boolean;
 var n: Integer;
 begin
+  GTapX := ElementTapX; GTapY := ElementTapY; GTapW := ElementTapW; GTapH := ElementTapH;
   n := StrToIntDef(Tag.GetAttribute('data-count'), 0) + 1;
   Tag.Attributes.AddOrSetValue('data-count', IntToStr(n));
   Result := True;
@@ -183,6 +186,16 @@ begin
       Check(TinaAttr('sp', 'data-count') = '1', 'tap 1 → OnTap set data-count=1');
       TinaTouch(0, cx, cy); TinaTouch(1, cx, cy); TinaFrame(VW, VH, 1);
       Check(TinaAttr('sp', 'data-count') = '2', 'tap 2 → OnTap set data-count=2');
+
+      // ---- Tier 2: the hook knows WHERE it was tapped ------------------
+      Check((Abs(GTapW - 120) < 0.5) and (Abs(GTapH - 40) < 0.5),
+        'ElementTapW/H = the box the Paint hook draws into (120x40), got ' +
+        FloatToStr(GTapW) + 'x' + FloatToStr(GTapH));
+      Check((Abs(GTapX - 60) < 1) and (Abs(GTapY - 20) < 1),
+        'centre tap → ElementTapX/Y ≈ (60,20), got (' + FloatToStr(GTapX) + ',' + FloatToStr(GTapY) + ')');
+      TinaTouch(0, cx - 50, cy + 10); TinaTouch(1, cx - 50, cy + 10); TinaFrame(VW, VH, 1);
+      Check((Abs(GTapX - 10) < 1) and (Abs(GTapY - 30) < 1),
+        'off-centre tap → ElementTapX/Y ≈ (10,30), got (' + FloatToStr(GTapX) + ',' + FloatToStr(GTapY) + ')');
     end;
 
   finally
