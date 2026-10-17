@@ -7223,7 +7223,7 @@ begin
   end;
   if Box.IsSVG then
   begin
-    if Box.SVGRoot <> nil then PaintSVG(Canvas, Box.SVGRoot, Box.X, y, Box.W, Box.H);
+    if Box.SVGRoot <> nil then PaintSVG(Canvas, Box.SVGRoot, Box.X, y, Box.W, Box.H, st.Color);
     Exit;
   end;
   if Box.IsImagePlaceholder then
