@@ -506,11 +506,39 @@ begin
   end;
 end;
 
+{ arcTo per the HTML canvas spec: the arc of radius R tangent to the line from
+  the current point P0 to P1 and to the line P1 → P2, joined to P0 by a straight
+  line. Degenerate cases (no current point, R = 0, coincident or collinear
+  points) fall back to a line to P1, as the spec does. }
 procedure TTina4Canvas2D.ArcTo(X1, Y1, X2, Y2, R: Single);
+var
+  ux, uy, vx, vy, lu, lv, cosT, theta, tanDist, cDist, bx, by, lb,
+  t1x, t1y, t2x, t2y, ccx, ccy, a1, a2, delta: Single;
 begin
-  // simplified: corner via the tangent point (good enough for rounded rects)
-  LineTo(X1, Y1);
-  LineTo(X2, Y2);
+  if not FHasCur then begin MoveTo(X1, Y1); Exit; end;
+  ux := FCurX - X1; uy := FCurY - Y1;          // P1 → P0
+  vx := X2 - X1;    vy := Y2 - Y1;             // P1 → P2
+  lu := Sqrt(ux * ux + uy * uy); lv := Sqrt(vx * vx + vy * vy);
+  if (R <= 0) or (lu < 1e-6) or (lv < 1e-6) then begin LineTo(X1, Y1); Exit; end;
+  ux := ux / lu; uy := uy / lu; vx := vx / lv; vy := vy / lv;
+  cosT := ux * vx + uy * vy;
+  if cosT > 1 then cosT := 1 else if cosT < -1 then cosT := -1;
+  theta := ArcCos(cosT);                       // the corner's interior angle
+  if (theta < 1e-4) or (Pi - theta < 1e-4) then begin LineTo(X1, Y1); Exit; end;
+  tanDist := R / Tan(theta / 2);               // P1 → each tangent point
+  t1x := X1 + ux * tanDist; t1y := Y1 + uy * tanDist;
+  t2x := X1 + vx * tanDist; t2y := Y1 + vy * tanDist;
+  bx := ux + vx; by := uy + vy;                // bisector toward the centre
+  lb := Sqrt(bx * bx + by * by);
+  cDist := R / Sin(theta / 2);
+  ccx := X1 + bx / lb * cDist; ccy := Y1 + by / lb * cDist;
+  a1 := ArcTan2(t1y - ccy, t1x - ccx);
+  a2 := ArcTan2(t2y - ccy, t2x - ccx);
+  delta := a2 - a1;                            // take the short way round
+  while delta > Pi do delta := delta - 2 * Pi;
+  while delta <= -Pi do delta := delta + 2 * Pi;
+  LineTo(t1x, t1y);
+  Arc(ccx, ccy, R, a1, a2, delta < 0);
 end;
 
 procedure TTina4Canvas2D.QuadraticCurveTo(CPX, CPY, X, Y: Single);
