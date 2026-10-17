@@ -117,6 +117,46 @@ ANDROID_PKG="com.tina4.pascal"      # Android application id (adb targets)
 # pipx installs pymobiledevice3 here; fall back to PATH
 PMD3="$(command -v pymobiledevice3 2>/dev/null || echo "$HOME/.local/bin/pymobiledevice3")"
 
+# JDK: $JAVA_HOME, then macOS java_home, then Homebrew's keg-only openjdk (it is
+# NOT on PATH and java_home can't see it until symlinked into
+# /Library/Java/JavaVirtualMachines). The /usr/bin/java stub on macOS exists even
+# with no JDK installed, so a JDK only counts when `java -version` succeeds.
+_resolve_java_home() {
+  for c in "${JAVA_HOME:-}" "$(/usr/libexec/java_home 2>/dev/null || true)" \
+           /opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home \
+           /opt/homebrew/opt/openjdk/libexec/openjdk.jdk/Contents/Home \
+           /usr/local/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home; do
+    [ -n "$c" ] && "$c/bin/java" -version >/dev/null 2>&1 && { printf '%s' "$c"; return; }
+  done
+  return 0
+}
+JAVA_HOME="$(_resolve_java_home)"
+if [ -n "$JAVA_HOME" ]; then
+  export JAVA_HOME
+  JAVA="$JAVA_HOME/bin/java"; KEYTOOL="$JAVA_HOME/bin/keytool"; JARSIGNER="$JAVA_HOME/bin/jarsigner"
+else
+  JAVA="java"; KEYTOOL="keytool"; JARSIGNER="jarsigner"
+fi
+have_jdk() { [ -n "$JAVA_HOME" ]; }
+
+# Xcode readiness (macOS). Two states break builds in confusing ways: xcode-select
+# pointing at the Command Line Tools (no iPhoneOS SDK -> iOS cross builds fail) and
+# an unaccepted Xcode licence (every `as`/`ld` call exits 69 -> FPC's own
+# `make all` dies halfway with "Error while assembling exitcode 69").
+# Prints one problem per line with the exact fix; prints nothing when ready.
+xcode_problems() {
+  [ "$(uname -s)" = Darwin ] || return 0
+  _sel="$(xcode-select -p 2>/dev/null || true)"
+  case "$_sel" in
+    *CommandLineTools*)
+      [ -d /Applications/Xcode.app ] && printf '%s\n' "xcode-select points at the Command Line Tools, not Xcode (no iOS SDK) → sudo xcode-select -s /Applications/Xcode.app/Contents/Developer" ;;
+    *Xcode*.app*)
+      xcodebuild -license check >/dev/null 2>&1 \
+        || printf '%s\n' "Xcode licence not accepted (assembler/linker calls exit 69) → sudo xcodebuild -license accept && xcodebuild -runFirstLaunch" ;;
+  esac
+  return 0
+}
+
 # ---- pretty ------------------------------------------------------------------
 if [ -t 1 ]; then B="$(printf '\033[1m')"; D="$(printf '\033[2m')"; G="$(printf '\033[32m')"; Y="$(printf '\033[33m')"; R="$(printf '\033[31m')"; Z="$(printf '\033[0m')"; else B=; D=; G=; Y=; R=; Z=; fi
 say()  { printf '%s\n' "$*"; }
@@ -141,6 +181,18 @@ target_flags() {
 }
 ALL_TARGETS="macos windows linux linux-arm64 android ios"
 
+# <cpu>-<os> RTL unit dirs a target needs (android ships two ABIs).
+target_rtl_dirs() {
+  case "$1" in
+    macos|darwin)  echo "aarch64-darwin" ;;
+    windows|win64) echo "x86_64-win64" ;;
+    linux|linux64) echo "x86_64-linux" ;;
+    linux-arm64)   echo "aarch64-linux" ;;
+    android)       echo "aarch64-android arm-android" ;;
+    ios)           echo "aarch64-ios" ;;
+  esac
+}
+
 # The watchOS-Simulator target needs the PATCHED FPC (aarch64-watchossim), a
 # separate prefix from ~/fpc. Where the CLI looks for it.
 WATCHOS_FPC="${TINA4_WATCHOS_FPC:-$HOME/fpc-watchos}"
@@ -154,9 +206,13 @@ cmd_doctor() {
   say "${B}Free Pascal${Z}"
   if [ -x "$FPC" ]; then
     ok "fpc  $("$FPC" -iV 2>/dev/null)   ${D}$FPC${Z}"
+    # `fpc <flags> -iTP` succeeds for any CPU the compiler knows, RTL or not, so
+    # check for the target's compiled RTL instead (system.ppu).
+    _units="$FPC_HOME/lib/fpc/$("$FPC" -iV 2>/dev/null)/units"
     for t in $ALL_TARGETS; do
-      f="$(target_flags "$t")"
-      if echo | "$FPC" $f -iTP >/dev/null 2>&1; then ok "  target $t"; else warn "  target $t (cross RTL missing)"; fi
+      for d in $(target_rtl_dirs "$t"); do
+        if [ -f "$_units/$d/rtl/system.ppu" ]; then ok "  target $t ${D}($d)${Z}"; else warn "  target $t ${D}($d)${Z} — cross RTL missing → tina4pascal setup fpc"; fi
+      done
     done
   else
     bad "fpc missing → tina4pascal setup fpc"
@@ -176,7 +232,10 @@ cmd_doctor() {
     || warn "Android emulator missing → tina4pascal setup android"
   say ""
   say "${B}iOS${Z}"
-  command -v xcodebuild >/dev/null 2>&1 && ok "$(xcodebuild -version 2>/dev/null | head -1)" || warn "Xcode missing → install from the App Store"
+  if xcodebuild -version >/dev/null 2>&1; then ok "$(xcodebuild -version 2>/dev/null | head -1)"
+  elif [ -d /Applications/Xcode.app ]; then warn "Xcode installed but not selected (see below)"
+  else warn "Xcode missing → install from the App Store"; fi
+  xcode_problems | while IFS= read -r p; do bad "$p"; done
   command -v xcodegen >/dev/null 2>&1 && ok "xcodegen" || warn "xcodegen missing → tina4pascal setup ios"
   if xcrun simctl list devices booted 2>/dev/null | grep -q 'Booted'; then
     ok "iOS Simulator — booted"
@@ -196,7 +255,8 @@ cmd_doctor() {
   fi
   say ""
   say "${B}Java${Z}"
-  command -v java >/dev/null 2>&1 && ok "$(java -version 2>&1 | head -1)" || warn "java missing (needed to package APKs)"
+  if have_jdk; then ok "$("$JAVA" -version 2>&1 | head -1)   ${D}$JAVA_HOME${Z}"
+  else warn "no JDK found (needed to package + sign APKs) → brew install openjdk@17"; fi
 }
 
 # ---- setup (downloads) -------------------------------------------------------
@@ -267,7 +327,6 @@ setup_android() {
   fi
   SM="$ANDROID_SDK/cmdline-tools/latest/bin/sdkmanager"
   [ -x "$SM" ] || SM="$(command -v sdkmanager)"
-  JAVA_HOME="${JAVA_HOME:-$(/usr/libexec/java_home 2>/dev/null || true)}"; export JAVA_HOME
   say "→ accepting licenses + installing platform/build-tools…"
   yes | "$SM" --licenses >/dev/null 2>&1 || true
   "$SM" "platforms;$PLATFORM_VER" "build-tools;$BT_VER" "platform-tools" "emulator" \
@@ -639,7 +698,7 @@ proj_android_build() {
   ANDROID_JAR="$ANDROID_SDK/platforms/$PLATFORM_VER/android.jar"
   [ -x "$BT/aapt2" ]     || die "Android build-tools missing → tina4pascal setup android"
   [ -f "$ANDROID_JAR" ]  || die "Android platform $PLATFORM_VER missing → tina4pascal setup android"
-  JAVA_HOME="${JAVA_HOME:-$(/usr/libexec/java_home 2>/dev/null || true)}"; export JAVA_HOME
+  have_jdk || die "no JDK found (needed to compile + dex the Android host) → brew install openjdk@17"
   JAVAC="$JAVA_HOME/bin/javac"; [ -x "$JAVAC" ] || JAVAC="javac"
   command -v "$JAVAC" >/dev/null 2>&1 || die "JDK (javac) required to package APKs"
 
@@ -846,14 +905,14 @@ proj_android_aab() {
   ( cd "$b" && zip -qr "$aout/base.zip" . ) || die "module zip failed"
   aab="$work/$name.aab"; rm -f "$aab"
   say "${D}bundletool build-bundle${Z}"
-  java -jar "$bt_jar" build-bundle --modules="$aout/base.zip" --output="$aab" --overwrite \
+  "$JAVA" -jar "$bt_jar" build-bundle --modules="$aout/base.zip" --output="$aab" --overwrite \
     || die "bundletool build-bundle failed"
   # sign the AAB with the upload key (jarsigner — AABs aren't apksigner-signed)
-  JS="$JAVA_HOME/bin/jarsigner"; [ -x "$JS" ] || JS="jarsigner"
+  JS="$JARSIGNER"
   "$JS" -keystore "$TINA4_KEYSTORE" -storepass "$TINA4_KS_PASS" \
     -keypass "${TINA4_KEY_PASS:-$TINA4_KS_PASS}" -sigalg SHA256withRSA -digestalg SHA-256 \
     "$aab" "$TINA4_KEY_ALIAS" >/dev/null 2>&1 || die "AAB signing (jarsigner) failed"
-  java -jar "$bt_jar" validate --bundle "$aab" >/dev/null 2>&1 \
+  "$JAVA" -jar "$bt_jar" validate --bundle "$aab" >/dev/null 2>&1 \
     && ok "AAB validated" || warn "bundletool validate reported issues (still produced)"
   ok "AAB (release-signed) → build/android/$name.aab   applicationId $bundle"
   say "  upload to Play Console (internal testing → production);"
@@ -1260,8 +1319,8 @@ EOF
   is portable while the key stays private.
 EOF
   # committable debug keystore — deterministic installable debug builds anywhere
-  if command -v keytool >/dev/null 2>&1; then
-    keytool -genkeypair -noprompt -keystore "$d/signing/debug.keystore" \
+  if have_jdk; then
+    "$KEYTOOL" -genkeypair -noprompt -keystore "$d/signing/debug.keystore" \
       -storepass android -keypass android -alias androiddebugkey \
       -dname "CN=Android Debug,O=Android,C=US" -keyalg RSA -keysize 2048 \
       -validity 10000 >/dev/null 2>&1 || true
@@ -1504,10 +1563,10 @@ cmd_apk() {
 # the SAME key for every update).
 cmd_keygen() {
   ks="${1:-$ROOT/android/release.jks}"; alias="${2:-tina4}"
-  command -v keytool >/dev/null 2>&1 || die "keytool not found (install a JDK)"
+  have_jdk || die "keytool not found (install a JDK: brew install openjdk@17)"
   [ -f "$ks" ] && die "keystore already exists: $ks (delete it to regenerate)"
   say "→ creating release keystore ${D}$ks${Z} (alias $alias)"
-  keytool -genkeypair -v -keystore "$ks" -alias "$alias" \
+  "$KEYTOOL" -genkeypair -v -keystore "$ks" -alias "$alias" \
     -keyalg RSA -keysize 2048 -validity 10000 || die "keytool failed"
   ok "keystore created: $ks"
   say "To sign a release build, export these (then: tina4pascal release):"
