@@ -18,7 +18,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 
 | Property | Status | Note |
 |---|---|---|
-| width, height | ✅ | px/%/auto, box-sizing-aware |
+| width, height | ✅ | px/%/auto, box-sizing-aware; every percentage resolves (0–1.5% and ~3% used to collide with the auto / fit-content sentinels — `tests/test_small_percent.pas`) |
 | min-width, max-width | ✅ | clamped in layout |
 | min-height, max-height | ✅ | clamped in LayoutBlock; **min-height also grows a flex container** (column main-axis / row cross-axis) so `flex:1` children get free space to stretch into and `align-items:center` has room to centre |
 | margin (+ 4 sides) | ✅ | shorthand, auto-center, vertical collapse |
