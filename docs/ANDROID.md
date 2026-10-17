@@ -123,6 +123,16 @@ builds both by default.
     `DispatchAction('Counter:Inc()')` parses `name(args)` and calls it. The
     renderer only surfaces the string — the Tina4 object:method(params) model.
 
+16. **Ask for runtime permissions on first use, never at launch.** Camera, mic,
+    location and (API 33+) `POST_NOTIFICATIONS` are requested the first time the
+    app uses them — `Tina4Notify.show` holds the notification, raises the dialog,
+    and posts it on grant. Asking at launch put a notifications prompt in front of
+    every app, including ones that never notify.
+
+17. **`deploy`/`build android` build both ABIs by default** (`arm64-v8a` +
+    `armeabi-v7a`); `ABIS=arm64-v8a` is the fast single-ABI dev build. Without
+    the arm cross RTL the CLI warns and ships arm64 only.
+
 ## Building the 32-bit arm cross (one-time)
 
 ```sh

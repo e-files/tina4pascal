@@ -6,6 +6,13 @@ Android (aarch64), iOS (aarch64). No Lazarus/IDE.
 
 These notes are the raw material for a future `freepascal-crossplatform` skill.
 
+> **Just want it built?** On Apple Silicon, `tina4pascal setup fpc` (which runs
+> [`toolchain/setup-fpc-macos.sh`](../toolchain/setup-fpc-macos.sh)) does
+> everything below for the native + Android arm64/armv7 + iOS targets, idempotently,
+> with a preflight for the two Xcode states that otherwise fail mid-build: the
+> Command Line Tools selected instead of Xcode, and an unaccepted licence
+> (`as`/`ld` exit 69 → "Error while assembling exitcode 69" in `rtl-unicode`).
+
 ## Layout
 
 - `~/fpc-dev/` — FPC 3.2.2 source tree + downloads (build area)

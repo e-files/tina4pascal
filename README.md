@@ -41,8 +41,11 @@ irm https://raw.githubusercontent.com/tina4stack/tina4pascal/main/scripts/instal
 curl -fsSL https://raw.githubusercontent.com/tina4stack/tina4pascal/main/scripts/install.sh | sh
 ```
 
-That puts `tina4pascal` on your PATH. FPC is fetched on your first `init`, so a
-clean machine is ready in about two minutes.
+That puts `tina4pascal` on your PATH. FPC 3.2.2 and its Android/iOS cross
+compilers are built from source on your first `init` (one-time, about 15
+minutes on Apple Silicon; `tina4pascal setup fpc` does the same up front, and
+`tina4pascal doctor` shows what's left). Building for iOS needs Xcode selected
+and its licence accepted — `doctor` prints the exact commands if not.
 
 ## Quick start
 
@@ -52,9 +55,10 @@ Install (above), then one command:
 tina4pascal init hello
 ```
 
-It scaffolds the project, fetches FPC if you don't have it, builds, and opens a
-native window showing **Hello World!** with the logo — your first app in about
-two minutes, same command on every OS. No FPC flags, nothing to install by hand.
+It scaffolds the project, builds FPC first if you don't have it, builds, and opens a
+native window showing **Hello World!** with the logo — about two minutes once
+the toolchain is in place, same command on every OS. No FPC flags, nothing to
+install by hand.
 
 Then keep going:
 
@@ -230,6 +234,7 @@ Everything you drive the stack with — by hand, from an IDE, or from an AI agen
 | **`tools/tina4pascal.ps1`** | Windows (PowerShell) | same surface, native to Windows; `build {win64,win32,linux,android,all}`, `setup android`, `doctor` |
 | **`tools/mcp`** | any MCP client (tina4-python) | **MCP server** — exposes the whole loop (`tina4_init/build/run/render/dom/boxes/inspect/script/debug/deploy/screenshot`) so any agent or IDE drives it. Tool-agnostic quick-start in [tools/mcp/README.md](tools/mcp/README.md) |
 | **`skills/tina4pascal-developer`** | any skill-aware agent | agent skill: architecture rules, toolchain formula, verification discipline (`./scripts/install-skills.sh`; presets for Claude Code · Codex · Cursor) |
+| **`toolchain/setup-fpc-macos.sh`** | Apple Silicon | the whole toolchain from nothing — native FPC, Android arm64/armv7 + iOS crosses, NDK wrappers, fpc.cfg (what `setup fpc` runs) |
 | **`toolchain/build-crosses.sh`** | macOS / Linux | build every FPC cross-compiler from one host |
 | **`toolchain/build-android-cross.ps1`** | Windows | build the FPC→Android cross pack (arm64/armv7/x86_64) from source + NDK |
 | **`toolchain/sign-release.ps1`** | Windows | EV-sign the pack binaries + CLI via SimplySign ([docs/SIGNING.md](docs/SIGNING.md)) |
