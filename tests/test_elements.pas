@@ -47,6 +47,14 @@ end;
 
 { Tier-2 tap hook — increments the element's own data-count and reports handled. }
 var GTapX, GTapY, GTapW, GTapH: Single;   // last ElementTap* seen by TapSpark
+var GHoverIn, GHoverOut: Integer; GHovX, GHovY: Single;   // seen by HoverSpark
+
+function HoverSpark(const Tag: THTMLTag; Inside: Boolean): Boolean;
+begin
+  if Inside then begin Inc(GHoverIn); GHovX := ElementHoverX; GHovY := ElementHoverY; end
+  else Inc(GHoverOut);
+  Result := True;
+end;
 
 function TapSpark(const Tag: THTMLTag): Boolean;
 var n: Integer;
@@ -196,6 +204,23 @@ begin
       TinaTouch(0, cx - 50, cy + 10); TinaTouch(1, cx - 50, cy + 10); TinaFrame(VW, VH, 1);
       Check((Abs(GTapX - 10) < 1) and (Abs(GTapY - 30) < 1),
         'off-centre tap → ElementTapX/Y ≈ (10,30), got (' + FloatToStr(GTapX) + ',' + FloatToStr(GTapY) + ')');
+
+      // ---- Tier 2: optional hover hook ------------------------------------
+      GHoverIn := 0; GHoverOut := 0;
+      TinaHover(cx + 30, cy - 5);
+      Check(GHoverIn = 0, 'no hover hook registered → OnHover never called');
+      SetElementHoverProc('sparkbox', @HoverSpark);
+      TinaHover(cx + 30, cy - 5);
+      Check((GHoverIn = 1) and (Abs(GHovX - 90) < 1) and (Abs(GHovY - 15) < 1),
+        'pointer over the element → OnHover(Inside) with ElementHoverX/Y ≈ (90,15), got (' +
+        FloatToStr(GHovX) + ',' + FloatToStr(GHovY) + ')');
+      Check(TinaTakeMoveRepaint, 'OnHover returning True asks the host to repaint');
+      TinaHover(cx, cy);
+      Check((GHoverIn = 2) and (GHoverOut = 0), 'moving within the element → another Inside call, no leave');
+      TinaHover(VW - 5, VH - 5);
+      Check(GHoverOut = 1, 'pointer leaves → exactly one OnHover(Inside=False)');
+      TinaHover(VW - 6, VH - 6);
+      Check(GHoverOut = 1, 'still outside → no repeated leave calls');
     end;
 
   finally
