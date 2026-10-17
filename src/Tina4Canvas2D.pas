@@ -576,18 +576,22 @@ end;
 
 // --- text ---
 procedure TTina4Canvas2D.FillText(const Text: string; X, Y: Single);
-var p: TTina4Point; m: TTina4TextMetrics; dx, dy: Single;
+var p: TTina4Point; m: TTina4TextMetrics; dx, dy, asc, desc: Single;
 begin
   dx := 0; dy := 0;
-  if S.TextAlign <> 'left' then
-  begin
-    m := FCanvas.MeasureText(Text, S.FontSize, S.FontStyles);
-    if S.TextAlign = 'center' then dx := -m.Width / 2
-    else if (S.TextAlign = 'right') or (S.TextAlign = 'end') then dx := -m.Width;
-  end;
+  m := FCanvas.MeasureText(Text, S.FontSize, S.FontStyles);
+  if S.TextAlign = 'center' then dx := -m.Width / 2
+  else if (S.TextAlign = 'right') or (S.TextAlign = 'end') then dx := -m.Width;
+  { The backend draws text from the TOP of its box, with the baseline Ascent
+    below it. Place that box from the measured metrics so 'middle' really
+    centres glyphs on Y; fall back to typical proportions when a backend
+    reports none. }
+  asc := m.Ascent; desc := m.Descent;
+  if asc <= 0 then begin asc := S.FontSize * 0.8; desc := S.FontSize * 0.2; end;
   if S.TextBaseline = 'top' then dy := 0
-  else if S.TextBaseline = 'middle' then dy := -S.FontSize * 0.35
-  else dy := -S.FontSize * 0.8;   // alphabetic/bottom ~ shift up from the baseline
+  else if S.TextBaseline = 'middle' then dy := -(asc + desc) / 2
+  else if S.TextBaseline = 'bottom' then dy := -(asc + desc)
+  else dy := -asc;   // alphabetic: the baseline sits on Y
   p := Dev(X + dx, Y + dy);
   FCanvas.DrawText(p.X, p.Y, Text, S.FontSize, S.FontStyles, ApplyAlpha(S.Fill));
 end;
