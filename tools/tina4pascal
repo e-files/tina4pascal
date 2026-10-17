@@ -218,7 +218,7 @@ target_rtl_dirs() {
 # separate prefix from ~/fpc. Where the CLI looks for it.
 WATCHOS_FPC="${TINA4_WATCHOS_FPC:-$HOME/fpc-watchos}"
 
-need_fpc() { [ -x "$FPC" ] || die "FPC not found at $FPC — run: tina4pascal setup fpc"; }
+need_fpc() { [ -x "$FPC" ] || die "FPC not found at $FPC — run: tina4pascal setup fpc (builds FPC + the Android/iOS crosses, one-time)"; }
 
 # ---- doctor ------------------------------------------------------------------
 cmd_doctor() {
@@ -329,11 +329,18 @@ setup_ios() {
 }
 
 setup_fpc() {
-  if [ -x "$FPC" ]; then ok "FPC already at $FPC_HOME"; return; fi
-  warn "FPC + cross-compilers are built from source (20+ pitfalls solved once)."
-  say  "  Follow docs/TOOLCHAIN.md, or run the formula:"
-  say  "    sh $ROOT/toolchain/build-crosses.sh"
-  say  "  (Homebrew's fpc is native-only — no cross RTLs — so it won't do.)"
+  # FPC + the Android/iOS cross compilers are built from source (Homebrew's fpc
+  # is native-only). On Apple Silicon the formula is fully scripted and
+  # idempotent — re-running only does what's missing.
+  if [ "$(uname -s)" = Darwin ] && [ "$(uname -m)" = arm64 ]; then
+    say "→ building the FPC toolchain (one-time, ~15 min; logs in ~/fpc-dev/logs)…"
+    FPC_PREFIX="$FPC_HOME" ANDROID_NDK="$ANDROID_NDK" sh "$ROOT/toolchain/setup-fpc-macos.sh"
+  elif [ -x "$FPC" ]; then
+    ok "FPC already at $FPC_HOME"
+  else
+    warn "FPC + cross-compilers are built from source — follow docs/TOOLCHAIN.md"
+    say  "  (Windows: toolchain/build-android-cross.ps1; Homebrew/apt fpc is native-only.)"
+  fi
 }
 
 setup_android() {
@@ -1258,6 +1265,11 @@ cmd_init() {
   for a in "$@"; do case "$a" in --no-run|no-run|norun) norun=1 ;; *) [ -z "$name" ] && name="$a" ;; esac; done
   [ -n "$name" ] || die "usage: tina4pascal init <name> [--no-run]"
   [ -e "$name" ] && die "'$name' already exists"
+  # first run on a clean Mac: build the toolchain now rather than failing
+  if [ ! -x "$FPC" ] && [ "$(uname -s)" = Darwin ] && [ "$(uname -m)" = arm64 ]; then
+    say "${B}First run — FPC isn't installed yet; building it now (one-time).${Z}"
+    setup_fpc
+  fi
   need_fpc
   title="$(printf '%s' "$name" | awk '{print toupper(substr($0,1,1)) substr($0,2)}')"
   d="$name"
